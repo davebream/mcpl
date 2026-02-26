@@ -8,6 +8,7 @@ import (
 
 // AtomicWriteFile writes data to path atomically using temp file + rename.
 // Refuses to write if path is a symlink.
+// Note: TOCTOU between Lstat and Rename is accepted; mitigated by user-owned directories with 0700 perms.
 func AtomicWriteFile(path string, data []byte, perm os.FileMode) error {
 	// Check for symlink
 	if info, err := os.Lstat(path); err == nil {
@@ -29,7 +30,9 @@ func AtomicWriteFile(path string, data []byte, perm os.FileMode) error {
 
 	defer func() {
 		tmp.Close()
-		os.Remove(tmpPath) // clean up on error
+		if tmpPath != "" {
+			os.Remove(tmpPath)
+		}
 	}()
 
 	if err := tmp.Chmod(perm); err != nil {
@@ -48,6 +51,7 @@ func AtomicWriteFile(path string, data []byte, perm os.FileMode) error {
 		return fmt.Errorf("rename temp to target: %w", err)
 	}
 
+	tmpPath = "" // prevent deferred cleanup after successful rename
 	return nil
 }
 

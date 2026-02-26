@@ -56,6 +56,16 @@ func TestConfigLoadSave(t *testing.T) {
 		assert.Error(t, err)
 	})
 
+	t.Run("load rejects insecure permissions", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "config.json")
+		os.WriteFile(path, []byte(`{"servers":{}}`), 0644)
+
+		_, err := Load(path)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "insecure permissions")
+	})
+
 	t.Run("serialize field preserved", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "config.json")
