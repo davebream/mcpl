@@ -21,7 +21,7 @@ func TestDetectStaleSocket(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "mcpl.sock")
 		// Create a regular file pretending to be a socket
-		os.WriteFile(path, []byte{}, 0600)
+		require.NoError(t, os.WriteFile(path, []byte{}, 0600))
 		assert.True(t, isStaleSocket(path))
 	})
 

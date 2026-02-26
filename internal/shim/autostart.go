@@ -54,8 +54,8 @@ func EnsureDaemon(socketPath, lockPath, configDir string) error {
 		return nil
 	}
 
-	// Clean stale socket
-	if isStaleSocket(socketPath) {
+	// Clean stale socket — we already know dial failed, just check existence
+	if _, err := os.Stat(socketPath); err == nil {
 		os.Remove(socketPath)
 		pidPath := filepath.Join(configDir, "mcpl.pid")
 		os.Remove(pidPath)
