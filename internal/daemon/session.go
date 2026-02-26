@@ -45,7 +45,9 @@ func (s *Session) ReadLine() ([]byte, error) {
 func (s *Session) WriteLine(data []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	line := append(data, '\n')
+	line := make([]byte, len(data)+1)
+	copy(line, data)
+	line[len(data)] = '\n'
 	_, err := s.Conn.Write(line)
 	return err
 }

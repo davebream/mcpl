@@ -158,6 +158,16 @@ func (s *ManagedServer) ResetCrashes() {
 	s.crashes = nil
 }
 
+// ForceStop sets state to StateStopped regardless of current state.
+// Used for crash recovery when the process exits unexpectedly and normal
+// transitions don't cover the current state (e.g., STARTING -> STOPPED is valid,
+// but this avoids needing to check current state).
+func (s *ManagedServer) ForceStop() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.state = StateStopped
+}
+
 func (s *ManagedServer) Start(env map[string]string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -235,7 +245,9 @@ func (s *ManagedServer) WriteToStdin(data []byte) error {
 	if s.stdin == nil {
 		return fmt.Errorf("server %s stdin not available", s.name)
 	}
-	line := append(data, '\n')
+	line := make([]byte, len(data)+1)
+	copy(line, data)
+	line[len(data)] = '\n'
 	_, err := s.stdin.Write(line)
 	return err
 }

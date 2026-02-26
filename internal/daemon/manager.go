@@ -75,9 +75,7 @@ func (m *ServerManager) StartServer(ctx context.Context, name string) error {
 		if state != StateStopped {
 			m.logger.Warn("server exited unexpectedly", "server", name, "state", state)
 			server.RecordCrash()
-			server.mu.Lock()
-			server.state = StateStopped
-			server.mu.Unlock()
+			server.ForceStop()
 		}
 	}()
 
@@ -97,10 +95,7 @@ func (m *ServerManager) StopServer(name string) {
 		return
 	}
 
-	server.mu.Lock()
-	server.state = StateStopped
-	server.mu.Unlock()
-
+	server.ForceStop()
 	server.Stop()
 
 	m.logger.Info("server stopped", "server", name)

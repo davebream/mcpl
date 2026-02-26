@@ -80,7 +80,10 @@ func (d *Daemon) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("listen: %w", err)
 	}
-	os.Chmod(d.socketPath, 0600)
+	if err := os.Chmod(d.socketPath, 0600); err != nil {
+		d.listener.Close()
+		return fmt.Errorf("chmod socket: %w", err)
+	}
 
 	d.logger.Info("daemon started", "socket", d.socketPath)
 
@@ -202,9 +205,8 @@ func (d *Daemon) sessionLoop(session *Session, server *ManagedServer) {
 	}
 }
 
-// reloadConfig re-reads config.json and updates the server map.
-// New servers are added, removed servers are left to drain via idle timeout.
-// Servers with changed config (command/args) are stopped for lazy restart.
+// reloadConfig re-reads config.json and adds any new servers to the server map.
+// TODO: detect changed/removed servers for lazy restart and drain.
 func (d *Daemon) reloadConfig() {
 	cfgPath, err := config.ConfigFilePath()
 	if err != nil {
