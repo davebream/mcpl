@@ -3,8 +3,6 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
@@ -17,20 +15,10 @@ var restartCmd = &cobra.Command{
 	Short: "Restart the mcpl daemon",
 	Long:  "Stops the daemon. The next 'mcpl connect' will auto-start a fresh daemon.",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		pidPath, err := config.PIDFilePath()
-		if err != nil {
-			return err
-		}
-
-		data, err := os.ReadFile(pidPath)
+		pid, _, err := config.ReadDaemonPID()
 		if err != nil {
 			fmt.Println("Daemon not running, nothing to restart")
 			return nil
-		}
-
-		pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-		if err != nil {
-			return fmt.Errorf("invalid PID file: %w", err)
 		}
 
 		process, err := os.FindProcess(pid)

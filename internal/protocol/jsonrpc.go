@@ -111,14 +111,3 @@ func (m *IDMapper) FindGlobalID(originalID json.RawMessage, sessionID string) (u
 	return 0, false
 }
 
-// GC removes mappings older than maxAge.
-func (m *IDMapper) GC(maxAge time.Duration) {
-	cutoff := time.Now().Add(-maxAge)
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	for id, mapping := range m.mappings {
-		if mapping.CreatedAt.Before(cutoff) {
-			delete(m.mappings, id)
-		}
-	}
-}

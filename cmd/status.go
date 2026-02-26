@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
@@ -17,20 +15,9 @@ var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show daemon status",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		pidPath, err := config.PIDFilePath()
-		if err != nil {
-			return err
-		}
-
-		data, err := os.ReadFile(pidPath)
+		pid, _, err := config.ReadDaemonPID()
 		if err != nil {
 			fmt.Println("Daemon: not running")
-			return nil
-		}
-
-		pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-		if err != nil {
-			fmt.Println("Daemon: not running (invalid PID file)")
 			return nil
 		}
 

@@ -1,9 +1,7 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
 
 	"github.com/davebream/mcpl/internal/config"
 	"github.com/spf13/cobra"
@@ -40,56 +38,13 @@ var removeCmd = &cobra.Command{
 		// Remove from client configs
 		clients := config.DetectClients()
 		for _, c := range clients {
-			if err := removeServerFromClient(c.Path, name); err == nil {
+			if err := config.RemoveServerEntry(c.Path, name); err == nil {
 				fmt.Printf("Removed from %s\n", c.Path)
 			}
 		}
 
 		return nil
 	},
-}
-
-// removeServerFromClient removes a server entry from a client config file.
-func removeServerFromClient(path, serverName string) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-
-	serversJSON, ok := raw["mcpServers"]
-	if !ok {
-		return fmt.Errorf("no mcpServers in %s", path)
-	}
-
-	var servers map[string]json.RawMessage
-	if err := json.Unmarshal(serversJSON, &servers); err != nil {
-		return err
-	}
-
-	if _, exists := servers[serverName]; !exists {
-		return fmt.Errorf("server %q not in %s", serverName, path)
-	}
-
-	delete(servers, serverName)
-
-	newServersJSON, err := json.Marshal(servers)
-	if err != nil {
-		return err
-	}
-	raw["mcpServers"] = newServersJSON
-
-	output, err := json.MarshalIndent(raw, "", "  ")
-	if err != nil {
-		return err
-	}
-	output = append(output, '\n')
-
-	return config.AtomicWriteFile(path, output, 0600)
 }
 
 func init() {

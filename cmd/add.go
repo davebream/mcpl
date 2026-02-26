@@ -95,64 +95,13 @@ Examples:
 
 		clients := config.DetectClients()
 		for _, c := range clients {
-			if err := config.RewriteClientConfig(c.Path, name, mcplBin); err != nil {
-				// Server may not exist in this client — that's fine, add it
-				if addServerToClient(c.Path, name, mcplBin) == nil {
-					fmt.Printf("Added shim to %s\n", c.Path)
-				}
-			} else {
-				fmt.Printf("Updated %s\n", c.Path)
+			if err := config.AddServerEntry(c.Path, name, mcplBin); err == nil {
+				fmt.Printf("Added shim to %s\n", c.Path)
 			}
 		}
 
 		return nil
 	},
-}
-
-// addServerToClient adds a new mcpl shim entry to a client config file.
-func addServerToClient(path, serverName, mcplBin string) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-
-	var servers map[string]json.RawMessage
-	if serversJSON, ok := raw["mcpServers"]; ok {
-		if err := json.Unmarshal(serversJSON, &servers); err != nil {
-			return err
-		}
-	} else {
-		servers = make(map[string]json.RawMessage)
-	}
-
-	shimEntry := map[string]interface{}{
-		"command": mcplBin,
-		"args":    []string{"connect", serverName},
-	}
-	shimJSON, err := json.Marshal(shimEntry)
-	if err != nil {
-		return err
-	}
-	servers[serverName] = shimJSON
-
-	newServersJSON, err := json.Marshal(servers)
-	if err != nil {
-		return err
-	}
-	raw["mcpServers"] = newServersJSON
-
-	output, err := json.MarshalIndent(raw, "", "  ")
-	if err != nil {
-		return err
-	}
-	output = append(output, '\n')
-
-	return config.AtomicWriteFile(path, output, 0600)
 }
 
 func init() {

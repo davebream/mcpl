@@ -3,7 +3,6 @@ package protocol
 import (
 	"encoding/json"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -97,27 +96,6 @@ func TestIDMapper(t *testing.T) {
 	t.Run("unmap nonexistent returns false", func(t *testing.T) {
 		m := NewIDMapper()
 		_, ok := m.Unmap(999)
-		assert.False(t, ok)
-	})
-
-	t.Run("gc removes old entries", func(t *testing.T) {
-		m := NewIDMapper()
-		globalID := m.Map(json.RawMessage(`1`), "s1")
-
-		// Entry should exist before GC
-		_, ok := m.Unmap(globalID)
-		assert.True(t, ok)
-
-		// Put it back (Unmap consumed it) and make it old
-		globalID2 := m.Map(json.RawMessage(`2`), "s1")
-		m.mu.Lock()
-		entry := m.mappings[globalID2]
-		entry.CreatedAt = time.Now().Add(-10 * time.Minute)
-		m.mu.Unlock()
-
-		m.GC(5 * time.Minute)
-
-		_, ok = m.Unmap(globalID2)
 		assert.False(t, ok)
 	})
 }

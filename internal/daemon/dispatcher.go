@@ -130,20 +130,23 @@ func (d *Daemon) dispatchResourceUpdate(msg *protocol.Message, server *ManagedSe
 	}
 }
 
-func (d *Daemon) broadcastToSessions(msg *protocol.Message, server *ManagedServer) {
-	data, _ := msg.Serialize()
-
-	// Collect sessions under lock, write outside to avoid holding mutex during I/O
+// sessionsForServer returns all sessions connected to the given server.
+// Caller must NOT hold d.mu.
+func (d *Daemon) sessionsForServer(serverName string) []*Session {
 	d.mu.Lock()
-	sessions := make([]*Session, 0, len(d.sessions))
+	defer d.mu.Unlock()
+	var sessions []*Session
 	for _, session := range d.sessions {
-		if session.ServerName == server.name {
+		if session.ServerName == serverName {
 			sessions = append(sessions, session)
 		}
 	}
-	d.mu.Unlock()
+	return sessions
+}
 
-	for _, session := range sessions {
+func (d *Daemon) broadcastToSessions(msg *protocol.Message, server *ManagedServer) {
+	data, _ := msg.Serialize()
+	for _, session := range d.sessionsForServer(server.name) {
 		session.WriteLine(data)
 	}
 }
@@ -180,14 +183,7 @@ func (d *Daemon) handleServerRequest(msg *protocol.Message, server *ManagedServe
 // handleRootsList fans out roots/list to all connected shims.
 // v1: forwards to first session only. Full fan-out-and-aggregate deferred to v2.
 func (d *Daemon) handleRootsList(msg *protocol.Message, server *ManagedServer) {
-	d.mu.Lock()
-	var sessions []*Session
-	for _, session := range d.sessions {
-		if session.ServerName == server.name {
-			sessions = append(sessions, session)
-		}
-	}
-	d.mu.Unlock()
+	sessions := d.sessionsForServer(server.name)
 
 	if len(sessions) == 0 {
 		resp := &protocol.Message{
@@ -206,17 +202,9 @@ func (d *Daemon) handleRootsList(msg *protocol.Message, server *ManagedServer) {
 
 // handleSampling routes sampling/createMessage to one connected shim.
 func (d *Daemon) handleSampling(msg *protocol.Message, server *ManagedServer) {
-	d.mu.Lock()
-	var target *Session
-	for _, session := range d.sessions {
-		if session.ServerName == server.name {
-			target = session
-			break
-		}
-	}
-	d.mu.Unlock()
+	sessions := d.sessionsForServer(server.name)
 
-	if target == nil {
+	if len(sessions) == 0 {
 		errResp := &protocol.Message{
 			JSONRPC: "2.0",
 			ID:      msg.ID,
@@ -228,6 +216,6 @@ func (d *Daemon) handleSampling(msg *protocol.Message, server *ManagedServer) {
 	}
 
 	data, _ := msg.Serialize()
-	target.WriteLine(data)
+	sessions[0].WriteLine(data)
 }
 

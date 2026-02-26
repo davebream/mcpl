@@ -87,46 +87,33 @@ func parseClientConfig(path string) (map[string]*ServerConfig, error) {
 	return servers, nil
 }
 
-// RewriteClientConfig rewrites a single server entry in a client config file
-// to use the mcpl shim instead of the original command.
-func RewriteClientConfig(path, serverName, mcplBin string) error {
+// modifyClientServers reads a client config, applies a mutation to its mcpServers,
+// and atomically writes back. The mutate function receives the current servers map
+// and should modify it in place. If mutate returns an error, the file is not written.
+func modifyClientServers(path string, mutate func(servers map[string]json.RawMessage) error) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("read client config: %w", err)
 	}
 
-	// Parse as generic JSON to preserve all fields
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return fmt.Errorf("parse client config: %w", err)
 	}
 
-	serversJSON, ok := raw["mcpServers"]
-	if !ok {
-		return fmt.Errorf("no mcpServers in %s", path)
-	}
-
 	var servers map[string]json.RawMessage
-	if err := json.Unmarshal(serversJSON, &servers); err != nil {
-		return fmt.Errorf("parse mcpServers: %w", err)
+	if serversJSON, ok := raw["mcpServers"]; ok {
+		if err := json.Unmarshal(serversJSON, &servers); err != nil {
+			return fmt.Errorf("parse mcpServers: %w", err)
+		}
+	} else {
+		servers = make(map[string]json.RawMessage)
 	}
 
-	if _, exists := servers[serverName]; !exists {
-		return fmt.Errorf("server %q not found in %s", serverName, path)
+	if err := mutate(servers); err != nil {
+		return err
 	}
 
-	// Replace the server entry with mcpl shim
-	shimEntry := map[string]interface{}{
-		"command": mcplBin,
-		"args":    []string{"connect", serverName},
-	}
-	shimJSON, err := json.Marshal(shimEntry)
-	if err != nil {
-		return fmt.Errorf("marshal shim entry: %w", err)
-	}
-	servers[serverName] = shimJSON
-
-	// Reassemble
 	newServersJSON, err := json.Marshal(servers)
 	if err != nil {
 		return fmt.Errorf("marshal servers: %w", err)
@@ -142,53 +129,65 @@ func RewriteClientConfig(path, serverName, mcplBin string) error {
 	return AtomicWriteFile(path, output, 0600)
 }
 
+// marshalShimEntry returns the JSON for an mcpl shim server entry.
+func marshalShimEntry(mcplBin, serverName string) (json.RawMessage, error) {
+	return json.Marshal(map[string]interface{}{
+		"command": mcplBin,
+		"args":    []string{"connect", serverName},
+	})
+}
+
+// RewriteClientConfig rewrites a single server entry in a client config file
+// to use the mcpl shim instead of the original command.
+func RewriteClientConfig(path, serverName, mcplBin string) error {
+	return modifyClientServers(path, func(servers map[string]json.RawMessage) error {
+		if _, exists := servers[serverName]; !exists {
+			return fmt.Errorf("server %q not found in %s", serverName, path)
+		}
+		shimJSON, err := marshalShimEntry(mcplBin, serverName)
+		if err != nil {
+			return err
+		}
+		servers[serverName] = shimJSON
+		return nil
+	})
+}
+
 // RewriteAllServers rewrites all server entries in a client config to use mcpl shims.
 func RewriteAllServers(path, mcplBin string) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("read client config: %w", err)
-	}
-
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return fmt.Errorf("parse client config: %w", err)
-	}
-
-	serversJSON, ok := raw["mcpServers"]
-	if !ok {
-		return nil // nothing to rewrite
-	}
-
-	var servers map[string]json.RawMessage
-	if err := json.Unmarshal(serversJSON, &servers); err != nil {
-		return fmt.Errorf("parse mcpServers: %w", err)
-	}
-
-	for name := range servers {
-		shimEntry := map[string]interface{}{
-			"command": mcplBin,
-			"args":    []string{"connect", name},
+	return modifyClientServers(path, func(servers map[string]json.RawMessage) error {
+		for name := range servers {
+			shimJSON, err := marshalShimEntry(mcplBin, name)
+			if err != nil {
+				return err
+			}
+			servers[name] = shimJSON
 		}
-		shimJSON, err := json.Marshal(shimEntry)
+		return nil
+	})
+}
+
+// AddServerEntry adds a new mcpl shim entry to a client config file.
+func AddServerEntry(path, serverName, mcplBin string) error {
+	return modifyClientServers(path, func(servers map[string]json.RawMessage) error {
+		shimJSON, err := marshalShimEntry(mcplBin, serverName)
 		if err != nil {
-			return fmt.Errorf("marshal shim entry: %w", err)
+			return err
 		}
-		servers[name] = shimJSON
-	}
+		servers[serverName] = shimJSON
+		return nil
+	})
+}
 
-	newServersJSON, err := json.Marshal(servers)
-	if err != nil {
-		return fmt.Errorf("marshal servers: %w", err)
-	}
-	raw["mcpServers"] = newServersJSON
-
-	output, err := json.MarshalIndent(raw, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal config: %w", err)
-	}
-	output = append(output, '\n')
-
-	return AtomicWriteFile(path, output, 0600)
+// RemoveServerEntry removes a server entry from a client config file.
+func RemoveServerEntry(path, serverName string) error {
+	return modifyClientServers(path, func(servers map[string]json.RawMessage) error {
+		if _, exists := servers[serverName]; !exists {
+			return fmt.Errorf("server %q not in %s", serverName, path)
+		}
+		delete(servers, serverName)
+		return nil
+	})
 }
 
 // IsAlreadyMCPL checks if a server entry already points to mcpl.

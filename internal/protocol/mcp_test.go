@@ -26,13 +26,6 @@ func TestInitCache(t *testing.T) {
 		assert.False(t, ok)
 	})
 
-	t.Run("invalidate removes entry", func(t *testing.T) {
-		cache := NewInitCache()
-		cache.Store("test", json.RawMessage(`{}`))
-		cache.Invalidate("test")
-		_, ok := cache.Get("test")
-		assert.False(t, ok)
-	})
 }
 
 func TestClassifyServerMessage(t *testing.T) {
@@ -114,7 +107,7 @@ func TestSubscriptionTracker(t *testing.T) {
 		tracker.Unsubscribe("file:///foo", "session-a")
 
 		sessions := tracker.Subscribers("file:///foo")
-		assert.Equal(t, []string{"session-b"}, sessions)
+		assert.ElementsMatch(t, []string{"session-b"}, sessions)
 	})
 
 	t.Run("remove session returns orphaned URIs", func(t *testing.T) {
@@ -126,7 +119,7 @@ func TestSubscriptionTracker(t *testing.T) {
 		orphaned := tracker.RemoveSession("session-a")
 		// file:///foo had only session-a -> orphaned
 		// file:///bar still has session-b -> not orphaned
-		assert.Equal(t, []string{"file:///foo"}, orphaned)
+		assert.ElementsMatch(t, []string{"file:///foo"}, orphaned)
 	})
 
 	t.Run("no subscribers returns empty", func(t *testing.T) {

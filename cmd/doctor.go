@@ -5,8 +5,6 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
@@ -57,27 +55,15 @@ var doctorCmd = &cobra.Command{
 		}
 
 		// 3. Daemon process
-		pidPath, err := config.PIDFilePath()
+		pid, _, err := config.ReadDaemonPID()
 		if err != nil {
-			fmt.Printf("Daemon:  FAIL (cannot determine PID file path: %v)\n", err)
-			allOK = false
+			fmt.Println("Daemon:  WARN (no PID file, daemon may not be running)")
 		} else {
-			data, err := os.ReadFile(pidPath)
-			if err != nil {
-				fmt.Println("Daemon:  WARN (no PID file, daemon may not be running)")
+			process, _ := os.FindProcess(pid)
+			if process != nil && process.Signal(syscall.Signal(0)) == nil {
+				fmt.Printf("Daemon:  OK (PID %d)\n", pid)
 			} else {
-				pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-				if err != nil {
-					fmt.Println("Daemon:  FAIL (invalid PID file)")
-					allOK = false
-				} else {
-					process, _ := os.FindProcess(pid)
-					if process != nil && process.Signal(syscall.Signal(0)) == nil {
-						fmt.Printf("Daemon:  OK (PID %d)\n", pid)
-					} else {
-						fmt.Printf("Daemon:  WARN (PID %d not running, stale PID file)\n", pid)
-					}
-				}
+				fmt.Printf("Daemon:  WARN (PID %d not running, stale PID file)\n", pid)
 			}
 		}
 

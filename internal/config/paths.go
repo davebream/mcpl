@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 )
 
 // ConfigDir returns the mcpl configuration directory.
@@ -82,4 +83,23 @@ func LockFilePath() (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, "mcpl.lock"), nil
+}
+
+// ReadDaemonPID reads and parses the PID from the daemon PID file.
+// Returns the PID and PID file path. Returns an error if the PID file
+// does not exist or contains an invalid PID.
+func ReadDaemonPID() (int, string, error) {
+	pidPath, err := PIDFilePath()
+	if err != nil {
+		return 0, "", fmt.Errorf("determine PID path: %w", err)
+	}
+	data, err := os.ReadFile(pidPath)
+	if err != nil {
+		return 0, pidPath, fmt.Errorf("read PID file: %w", err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		return 0, pidPath, fmt.Errorf("invalid PID file: %w", err)
+	}
+	return pid, pidPath, nil
 }

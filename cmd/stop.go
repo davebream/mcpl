@@ -3,8 +3,6 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"strconv"
-	"strings"
 	"syscall"
 
 	"github.com/davebream/mcpl/internal/config"
@@ -15,19 +13,9 @@ var stopCmd = &cobra.Command{
 	Use:   "stop",
 	Short: "Stop the mcpl daemon",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		pidPath, err := config.PIDFilePath()
+		pid, _, err := config.ReadDaemonPID()
 		if err != nil {
-			return err
-		}
-
-		data, err := os.ReadFile(pidPath)
-		if err != nil {
-			return fmt.Errorf("daemon not running (no PID file)")
-		}
-
-		pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-		if err != nil {
-			return fmt.Errorf("invalid PID file: %w", err)
+			return fmt.Errorf("daemon not running (%v)", err)
 		}
 
 		process, err := os.FindProcess(pid)

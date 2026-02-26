@@ -3,7 +3,6 @@ package protocol
 import (
 	"encoding/json"
 	"fmt"
-	"sort"
 	"sync"
 )
 
@@ -66,12 +65,6 @@ func (c *InitCache) Get(serverName string) (json.RawMessage, bool) {
 	return result, ok
 }
 
-func (c *InitCache) Invalidate(serverName string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	delete(c.cached, serverName)
-}
-
 // SubscriptionTracker maintains URI -> Set<sessionID> for resource subscriptions.
 type SubscriptionTracker struct {
 	mu            sync.Mutex
@@ -114,7 +107,6 @@ func (s *SubscriptionTracker) Subscribers(uri string) []string {
 	for id := range sessions {
 		result = append(result, id)
 	}
-	sort.Strings(result)
 	return result
 }
 
@@ -133,7 +125,6 @@ func (s *SubscriptionTracker) RemoveSession(sessionID string) []string {
 			}
 		}
 	}
-	sort.Strings(orphaned)
 	return orphaned
 }
 
