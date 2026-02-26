@@ -33,6 +33,7 @@ func DetectClientsIn(home string) []ClientInfo {
 		path string
 	}{
 		{"Claude Code", filepath.Join(home, ".claude.json")},
+		{"Claude Code (local)", filepath.Join(home, ".claude", "settings.local.json")},
 		{"Cursor", filepath.Join(home, ".cursor", "mcp.json")},
 	}
 
@@ -119,11 +120,17 @@ func RewriteClientConfig(path, serverName, mcplBin string) error {
 		"command": mcplBin,
 		"args":    []string{"connect", serverName},
 	}
-	shimJSON, _ := json.Marshal(shimEntry)
+	shimJSON, err := json.Marshal(shimEntry)
+	if err != nil {
+		return fmt.Errorf("marshal shim entry: %w", err)
+	}
 	servers[serverName] = shimJSON
 
 	// Reassemble
-	newServersJSON, _ := json.Marshal(servers)
+	newServersJSON, err := json.Marshal(servers)
+	if err != nil {
+		return fmt.Errorf("marshal servers: %w", err)
+	}
 	raw["mcpServers"] = newServersJSON
 
 	output, err := json.MarshalIndent(raw, "", "  ")
@@ -132,7 +139,7 @@ func RewriteClientConfig(path, serverName, mcplBin string) error {
 	}
 	output = append(output, '\n')
 
-	return os.WriteFile(path, output, 0600)
+	return AtomicWriteFile(path, output, 0600)
 }
 
 // RewriteAllServers rewrites all server entries in a client config to use mcpl shims.
@@ -162,11 +169,17 @@ func RewriteAllServers(path, mcplBin string) error {
 			"command": mcplBin,
 			"args":    []string{"connect", name},
 		}
-		shimJSON, _ := json.Marshal(shimEntry)
+		shimJSON, err := json.Marshal(shimEntry)
+		if err != nil {
+			return fmt.Errorf("marshal shim entry: %w", err)
+		}
 		servers[name] = shimJSON
 	}
 
-	newServersJSON, _ := json.Marshal(servers)
+	newServersJSON, err := json.Marshal(servers)
+	if err != nil {
+		return fmt.Errorf("marshal servers: %w", err)
+	}
 	raw["mcpServers"] = newServersJSON
 
 	output, err := json.MarshalIndent(raw, "", "  ")
@@ -175,7 +188,7 @@ func RewriteAllServers(path, mcplBin string) error {
 	}
 	output = append(output, '\n')
 
-	return os.WriteFile(path, output, 0600)
+	return AtomicWriteFile(path, output, 0600)
 }
 
 // IsAlreadyMCPL checks if a server entry already points to mcpl.

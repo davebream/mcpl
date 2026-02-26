@@ -136,6 +136,40 @@ func TestRewriteClientConfig(t *testing.T) {
 	})
 }
 
+func TestRewriteAllServers(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+
+	original := map[string]interface{}{
+		"mcpServers": map[string]interface{}{
+			"a": map[string]interface{}{"command": "npx", "args": []interface{}{"a-server"}},
+			"b": map[string]interface{}{"command": "node", "args": []interface{}{"b-server.js"}},
+		},
+		"otherSetting": "preserved",
+	}
+	data, _ := json.MarshalIndent(original, "", "  ")
+	os.WriteFile(path, data, 0600)
+
+	err := RewriteAllServers(path, "/usr/local/bin/mcpl")
+	require.NoError(t, err)
+
+	rewritten, _ := os.ReadFile(path)
+	var result map[string]interface{}
+	json.Unmarshal(rewritten, &result)
+
+	// Other settings preserved
+	assert.Equal(t, "preserved", result["otherSetting"])
+
+	servers := result["mcpServers"].(map[string]interface{})
+	for _, name := range []string{"a", "b"} {
+		server := servers[name].(map[string]interface{})
+		assert.Equal(t, "/usr/local/bin/mcpl", server["command"])
+		args := server["args"].([]interface{})
+		assert.Equal(t, "connect", args[0])
+		assert.Equal(t, name, args[1])
+	}
+}
+
 func TestIsAlreadyMCPL(t *testing.T) {
 	assert.True(t, IsAlreadyMCPL(&ServerConfig{Command: "/usr/local/bin/mcpl", Args: []string{"connect", "test"}}))
 	assert.True(t, IsAlreadyMCPL(&ServerConfig{Command: "mcpl", Args: []string{"connect", "test"}}))

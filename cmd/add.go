@@ -33,7 +33,7 @@ Examples:
 			var err error
 
 			if len(args) >= 2 && args[1] == "-" {
-				data, err = io.ReadAll(os.Stdin)
+				data, err = io.ReadAll(io.LimitReader(os.Stdin, 1<<20)) // 1 MB limit
 			} else if len(args) >= 2 {
 				data = []byte(args[1])
 			} else {
@@ -134,10 +134,16 @@ func addServerToClient(path, serverName, mcplBin string) error {
 		"command": mcplBin,
 		"args":    []string{"connect", serverName},
 	}
-	shimJSON, _ := json.Marshal(shimEntry)
+	shimJSON, err := json.Marshal(shimEntry)
+	if err != nil {
+		return err
+	}
 	servers[serverName] = shimJSON
 
-	newServersJSON, _ := json.Marshal(servers)
+	newServersJSON, err := json.Marshal(servers)
+	if err != nil {
+		return err
+	}
 	raw["mcpServers"] = newServersJSON
 
 	output, err := json.MarshalIndent(raw, "", "  ")
@@ -146,7 +152,7 @@ func addServerToClient(path, serverName, mcplBin string) error {
 	}
 	output = append(output, '\n')
 
-	return os.WriteFile(path, output, 0600)
+	return config.AtomicWriteFile(path, output, 0600)
 }
 
 func init() {

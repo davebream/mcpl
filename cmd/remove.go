@@ -77,7 +77,10 @@ func removeServerFromClient(path, serverName string) error {
 
 	delete(servers, serverName)
 
-	newServersJSON, _ := json.Marshal(servers)
+	newServersJSON, err := json.Marshal(servers)
+	if err != nil {
+		return err
+	}
 	raw["mcpServers"] = newServersJSON
 
 	output, err := json.MarshalIndent(raw, "", "  ")
@@ -86,7 +89,7 @@ func removeServerFromClient(path, serverName string) error {
 	}
 	output = append(output, '\n')
 
-	return os.WriteFile(path, output, 0600)
+	return config.AtomicWriteFile(path, output, 0600)
 }
 
 func init() {

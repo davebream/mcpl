@@ -63,6 +63,29 @@ func TestMergeClientsServers(t *testing.T) {
 		assert.Contains(t, merged, "real")
 		assert.Empty(t, conflicts)
 	})
+
+	t.Run("detects cross-client conflicts", func(t *testing.T) {
+		clients := []ClientInfo{
+			{
+				Name: "Claude Code",
+				Servers: map[string]*ServerConfig{
+					"context7": {Command: "npx", Args: []string{"-y", "context7-v1"}},
+				},
+			},
+			{
+				Name: "Cursor",
+				Servers: map[string]*ServerConfig{
+					"context7": {Command: "npx", Args: []string{"-y", "context7-v2"}},
+				},
+			},
+		}
+		merged, conflicts := MergeClientsServers(clients)
+		assert.Len(t, merged, 1) // first one wins
+		assert.Len(t, conflicts, 1)
+		assert.Equal(t, "context7", conflicts[0].Name)
+		assert.Equal(t, "Claude Code", conflicts[0].Sources[0])
+		assert.Equal(t, "Cursor", conflicts[0].Sources[1])
+	})
 }
 
 func TestBackupAndRestore(t *testing.T) {

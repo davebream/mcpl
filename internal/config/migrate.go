@@ -89,7 +89,7 @@ func BackupClientConfig(path string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path+".mcpl.bak", data, 0600)
+	return AtomicWriteFile(path+".mcpl.bak", data, 0600)
 }
 
 // RestoreClientConfig restores a client config from its .bak copy.
@@ -99,8 +99,10 @@ func RestoreClientConfig(path string) error {
 	if err != nil {
 		return fmt.Errorf("no backup found at %s", bakPath)
 	}
-	if err := os.WriteFile(path, data, 0600); err != nil {
+	if err := AtomicWriteFile(path, data, 0600); err != nil {
 		return err
 	}
-	return os.Remove(bakPath)
+	// Best-effort cleanup of backup; restore itself already succeeded
+	os.Remove(bakPath)
+	return nil
 }
