@@ -44,14 +44,20 @@ var restartCmd = &cobra.Command{
 		}
 
 		// Wait for process to exit (up to 5s)
+		stopped := false
 		for i := 0; i < 50; i++ {
 			time.Sleep(100 * time.Millisecond)
 			if err := process.Signal(syscall.Signal(0)); err != nil {
-				break // process exited
+				stopped = true
+				break
 			}
 		}
 
-		fmt.Println("Daemon stopped. Next 'mcpl connect' will start a fresh daemon.")
+		if stopped {
+			fmt.Println("Daemon stopped. Next 'mcpl connect' will start a fresh daemon.")
+		} else {
+			fmt.Fprintf(os.Stderr, "Warning: daemon (PID %d) did not exit within 5s. It may still be running.\n", pid)
+		}
 		return nil
 	},
 }

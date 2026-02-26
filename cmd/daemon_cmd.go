@@ -45,7 +45,10 @@ var daemonCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		config.EnsureDir(logDir, 0700)
+		if err := config.EnsureDir(logDir, 0700); err != nil {
+			// Non-fatal: logging falls back to stderr
+			fmt.Fprintf(os.Stderr, "mcpl: cannot create log directory: %v\n", err)
+		}
 
 		// TODO: set up file-based logger
 		logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
@@ -58,9 +61,14 @@ var daemonCmd = &cobra.Command{
 		}
 
 		// Write PID file
-		pidPath, _ := config.PIDFilePath()
-		config.AtomicWriteFile(pidPath, []byte(fmt.Sprintf("%d", os.Getpid())), 0600)
-		defer os.Remove(pidPath)
+		pidPath, err := config.PIDFilePath()
+		if err != nil {
+			logger.Warn("cannot determine PID file path", "error", err)
+		} else if err := config.AtomicWriteFile(pidPath, []byte(fmt.Sprintf("%d", os.Getpid())), 0600); err != nil {
+			logger.Warn("failed to write PID file", "error", err)
+		} else {
+			defer os.Remove(pidPath)
+		}
 
 		// Handle SIGTERM for graceful shutdown
 		ctx, cancel := context.WithCancel(context.Background())

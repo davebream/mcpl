@@ -21,12 +21,13 @@ var doctorCmd = &cobra.Command{
 		allOK := true
 
 		// 1. Config file
+		var cfg *config.Config
 		cfgPath, err := config.ConfigFilePath()
 		if err != nil {
 			fmt.Printf("Config:  FAIL (cannot determine path: %v)\n", err)
 			allOK = false
 		} else {
-			cfg, err := config.Load(cfgPath)
+			cfg, err = config.Load(cfgPath)
 			if err != nil {
 				fmt.Printf("Config:  FAIL (%v)\n", err)
 				allOK = false
@@ -56,21 +57,26 @@ var doctorCmd = &cobra.Command{
 		}
 
 		// 3. Daemon process
-		pidPath, _ := config.PIDFilePath()
-		data, err := os.ReadFile(pidPath)
+		pidPath, err := config.PIDFilePath()
 		if err != nil {
-			fmt.Println("Daemon:  WARN (no PID file, daemon may not be running)")
+			fmt.Printf("Daemon:  FAIL (cannot determine PID file path: %v)\n", err)
+			allOK = false
 		} else {
-			pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+			data, err := os.ReadFile(pidPath)
 			if err != nil {
-				fmt.Println("Daemon:  FAIL (invalid PID file)")
-				allOK = false
+				fmt.Println("Daemon:  WARN (no PID file, daemon may not be running)")
 			} else {
-				process, _ := os.FindProcess(pid)
-				if process != nil && process.Signal(syscall.Signal(0)) == nil {
-					fmt.Printf("Daemon:  OK (PID %d)\n", pid)
+				pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+				if err != nil {
+					fmt.Println("Daemon:  FAIL (invalid PID file)")
+					allOK = false
 				} else {
-					fmt.Printf("Daemon:  WARN (PID %d not running, stale PID file)\n", pid)
+					process, _ := os.FindProcess(pid)
+					if process != nil && process.Signal(syscall.Signal(0)) == nil {
+						fmt.Printf("Daemon:  OK (PID %d)\n", pid)
+					} else {
+						fmt.Printf("Daemon:  WARN (PID %d not running, stale PID file)\n", pid)
+					}
 				}
 			}
 		}
@@ -87,15 +93,12 @@ var doctorCmd = &cobra.Command{
 		}
 
 		// 5. Server commands in PATH
-		if cfgPath != "" {
-			cfg, err := config.Load(cfgPath)
-			if err == nil {
-				for name, scfg := range cfg.Servers {
-					if _, err := exec.LookPath(scfg.Command); err != nil {
-						fmt.Printf("Server %s: WARN (command %q not found in PATH)\n", name, scfg.Command)
-					} else {
-						fmt.Printf("Server %s: OK (%s)\n", name, scfg.Command)
-					}
+		if cfg != nil {
+			for name, scfg := range cfg.Servers {
+				if _, err := exec.LookPath(scfg.Command); err != nil {
+					fmt.Printf("Server %s: WARN (command %q not found in PATH)\n", name, scfg.Command)
+				} else {
+					fmt.Printf("Server %s: OK (%s)\n", name, scfg.Command)
 				}
 			}
 		}

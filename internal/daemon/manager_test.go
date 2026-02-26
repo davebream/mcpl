@@ -14,7 +14,7 @@ func TestServerManagerStartServer(t *testing.T) {
 	t.Run("starts a simple process", func(t *testing.T) {
 		cfg := &config.Config{
 			Servers: map[string]*config.ServerConfig{
-				"echo-server": {Command: "cat"}, // cat reads stdin, echoes to stdout
+				"echo-server": {Command: "/bin/cat"}, // cat reads stdin, echoes to stdout
 			},
 		}
 		mgr := NewServerManager(cfg, nil)
@@ -43,7 +43,7 @@ func TestServerManagerStartServer(t *testing.T) {
 	t.Run("returns error for failed server", func(t *testing.T) {
 		cfg := &config.Config{
 			Servers: map[string]*config.ServerConfig{
-				"bad": {Command: "cat"},
+				"bad": {Command: "/bin/cat"},
 			},
 		}
 		mgr := NewServerManager(cfg, nil)
@@ -63,7 +63,7 @@ func TestServerManagerStartServer(t *testing.T) {
 func TestServerManagerStopServer(t *testing.T) {
 	cfg := &config.Config{
 		Servers: map[string]*config.ServerConfig{
-			"sleeper": {Command: "sleep", Args: []string{"60"}},
+			"sleeper": {Command: "/bin/sleep", Args: []string{"60"}},
 		},
 	}
 	mgr := NewServerManager(cfg, nil)
