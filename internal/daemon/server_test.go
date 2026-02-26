@@ -1,11 +1,49 @@
 package daemon
 
 import (
+	"os"
 	"testing"
+	"time"
 
 	"github.com/davebream/mcpl/internal/config"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+func TestWriteToStdinTimeout(t *testing.T) {
+	// Create a pipe where nobody reads the read end — fills buffer, blocks writes
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	defer r.Close()
+
+	cfg := &config.ServerConfig{Command: "echo"}
+	s := NewManagedServer("test", cfg)
+	s.mu.Lock()
+	s.stdin = w
+	s.mu.Unlock()
+
+	// Fill the pipe buffer (typically 64KB on macOS/Linux)
+	filler := make([]byte, 128*1024)
+	// Write in a goroutine since it will block
+	go func() {
+		for i := 0; i < 10; i++ {
+			w.Write(filler)
+		}
+	}()
+
+	// Give the filler goroutine time to fill the buffer
+	time.Sleep(100 * time.Millisecond)
+
+	// WriteToStdin should return an error within the deadline, not hang forever
+	start := time.Now()
+	err = s.WriteToStdin([]byte(`{"jsonrpc":"2.0","id":1,"method":"test"}`))
+	elapsed := time.Since(start)
+
+	// Should complete within 10s+buffer (the deadline), not hang indefinitely
+	assert.Less(t, elapsed, 15*time.Second, "WriteToStdin should not hang indefinitely")
+	// After timeout, stdin is closed — further writes should fail
+	assert.Error(t, err)
+}
 
 func TestManagedServerSerializeQueue(t *testing.T) {
 	t.Run("created when serialize is true", func(t *testing.T) {

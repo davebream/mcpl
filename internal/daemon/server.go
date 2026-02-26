@@ -273,15 +273,38 @@ func (s *ManagedServer) Wait() {
 	}
 }
 
+const stdinWriteTimeout = 10 * time.Second
+
 func (s *ManagedServer) WriteToStdin(data []byte) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.stdin == nil {
+	stdin := s.stdin
+	s.mu.Unlock()
+
+	if stdin == nil {
 		return fmt.Errorf("server %s stdin not available", s.name)
 	}
+
 	line := make([]byte, len(data)+1)
 	copy(line, data)
 	line[len(data)] = '\n'
-	_, err := s.stdin.Write(line)
-	return err
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := stdin.Write(line)
+		done <- err
+	}()
+
+	timer := time.NewTimer(stdinWriteTimeout)
+	defer timer.Stop()
+
+	select {
+	case err := <-done:
+		return err
+	case <-timer.C:
+		// Close stdin to unblock the goroutine and prevent interleaved writes.
+		// This is fatal for the server — it will see EOF and exit.
+		stdin.Close()
+		<-done // wait for goroutine to finish (Write returns after Close)
+		return fmt.Errorf("server %s stdin write timed out after %s", s.name, stdinWriteTimeout)
+	}
 }
