@@ -36,12 +36,22 @@ func TestSerializeQueue(t *testing.T) {
 		q := NewSerializeQueue()
 		defer q.Close()
 
+		// Block the processLoop so the cancellable entry stays queued
+		blocker := make(chan struct{})
+		q.Enqueue(func() {
+			<-blocker
+		})
+
 		executed := false
 		id := q.EnqueueCancellable(func() {
 			executed = true
 		})
 
+		// Cancel while blocker holds the processLoop
 		q.Cancel(id)
+		// Release the blocker
+		close(blocker)
+
 		time.Sleep(50 * time.Millisecond)
 		assert.False(t, executed)
 	})

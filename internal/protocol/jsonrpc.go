@@ -96,6 +96,21 @@ func (m *IDMapper) Unmap(globalID uint64) (*IDMapping, bool) {
 	return mapping, ok
 }
 
+// FindGlobalID searches for the global ID assigned to a given original ID and session.
+// Used for cancellation remapping where the shim references its local request ID.
+// Returns 0, false if no mapping is found (e.g., response already consumed the mapping).
+func (m *IDMapper) FindGlobalID(originalID json.RawMessage, sessionID string) (uint64, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	origStr := string(originalID)
+	for _, mapping := range m.mappings {
+		if mapping.SessionID == sessionID && string(mapping.OriginalID) == origStr {
+			return mapping.GlobalID, true
+		}
+	}
+	return 0, false
+}
+
 // GC removes mappings older than maxAge.
 func (m *IDMapper) GC(maxAge time.Duration) {
 	cutoff := time.Now().Add(-maxAge)

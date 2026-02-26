@@ -48,3 +48,29 @@ func isUnsubscribeRequest(msg *protocol.Message) bool {
 func isCancellationNotification(msg *protocol.Message) bool {
 	return msg.IsNotification() && msg.Method == "notifications/cancelled"
 }
+
+// handleCancellation remaps the requestId in a cancellation notification
+// from the shim's local ID to the global ID the server knows, then forwards.
+func handleCancellation(msg *protocol.Message, mapper *protocol.IDMapper, sessionID string, server *ManagedServer) {
+	if len(msg.Params) == 0 {
+		return
+	}
+	var params map[string]json.RawMessage
+	if err := json.Unmarshal(msg.Params, &params); err != nil {
+		return
+	}
+	reqID, ok := params["requestId"]
+	if !ok || len(reqID) == 0 {
+		return
+	}
+
+	globalID, found := mapper.FindGlobalID(reqID, sessionID)
+	if found {
+		params["requestId"] = json.RawMessage(strconv.FormatUint(globalID, 10))
+		newParams, _ := json.Marshal(params)
+		msg.Params = newParams
+	}
+	// Forward even if mapping not found (response may have already consumed it)
+	data, _ := msg.Serialize()
+	server.WriteToStdin(data)
+}

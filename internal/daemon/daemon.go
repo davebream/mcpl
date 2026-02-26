@@ -189,7 +189,14 @@ func (d *Daemon) handleConnection(conn net.Conn) {
 	server.RemoveConnection(session.ID)
 	d.mu.Lock()
 	delete(d.sessions, session.ID)
+	// Remove progress tokens owned by this session
+	for token, sid := range d.progressTokens {
+		if sid == session.ID {
+			delete(d.progressTokens, token)
+		}
+	}
 	d.mu.Unlock()
+	d.subs.RemoveSession(session.ID)
 
 	d.logger.Info("session disconnected", "session", session.ID, "server", req.Server)
 }
@@ -241,20 +248,19 @@ func (d *Daemon) sessionLoop(session *Session, server *ManagedServer) {
 
 		// Track resource subscriptions
 		if isSubscribeRequest(msg) {
-			if uri, ok := extractSubscriptionURI(msg); ok {
+			if uri, ok := protocol.ExtractResourceURI(msg); ok {
 				d.subs.Subscribe(uri, session.ID)
 			}
 		}
 		if isUnsubscribeRequest(msg) {
-			if uri, ok := extractSubscriptionURI(msg); ok {
+			if uri, ok := protocol.ExtractResourceURI(msg); ok {
 				d.subs.Unsubscribe(uri, session.ID)
 			}
 		}
 
-		// Handle cancellation — forward to server
+		// Handle cancellation — remap requestId before forwarding
 		if isCancellationNotification(msg) {
-			data, _ := msg.Serialize()
-			server.WriteToStdin(data)
+			handleCancellation(msg, d.idMapper, session.ID, server)
 			continue
 		}
 
@@ -266,19 +272,6 @@ func (d *Daemon) sessionLoop(session *Session, server *ManagedServer) {
 		data, _ := msg.Serialize()
 		server.WriteToStdin(data)
 	}
-}
-
-func extractSubscriptionURI(msg *protocol.Message) (string, bool) {
-	if len(msg.Params) == 0 {
-		return "", false
-	}
-	var params struct {
-		URI string `json:"uri"`
-	}
-	if err := json.Unmarshal(msg.Params, &params); err != nil || params.URI == "" {
-		return "", false
-	}
-	return params.URI, true
 }
 
 // reloadConfig re-reads config.json and adds any new servers to the server map.

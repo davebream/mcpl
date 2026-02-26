@@ -64,11 +64,7 @@ func (d *Daemon) dispatchResponse(msg *protocol.Message) {
 		return
 	}
 
-	// Cache initialize response
-	if msg.Result != nil {
-		// Check if this was an initialize response by looking up the original method
-		// (stored during Map). For now, cache based on init state.
-	}
+	// TODO: cache initialize response here (Task 10d)
 
 	d.mu.Lock()
 	session, ok := d.sessions[sessionID]
@@ -119,25 +115,37 @@ func (d *Daemon) dispatchResourceUpdate(msg *protocol.Message, server *ManagedSe
 	subscribers := d.subs.Subscribers(uri)
 	data, _ := msg.Serialize()
 
+	// Collect sessions under lock, write outside to avoid holding mutex during I/O
 	d.mu.Lock()
+	sessions := make([]*Session, 0, len(subscribers))
 	for _, sessionID := range subscribers {
 		if session, ok := d.sessions[sessionID]; ok {
-			session.WriteLine(data)
+			sessions = append(sessions, session)
 		}
 	}
 	d.mu.Unlock()
+
+	for _, session := range sessions {
+		session.WriteLine(data)
+	}
 }
 
 func (d *Daemon) broadcastToSessions(msg *protocol.Message, server *ManagedServer) {
 	data, _ := msg.Serialize()
 
+	// Collect sessions under lock, write outside to avoid holding mutex during I/O
 	d.mu.Lock()
+	sessions := make([]*Session, 0, len(d.sessions))
 	for _, session := range d.sessions {
 		if session.ServerName == server.name {
-			session.WriteLine(data)
+			sessions = append(sessions, session)
 		}
 	}
 	d.mu.Unlock()
+
+	for _, session := range sessions {
+		session.WriteLine(data)
+	}
 }
 
 func (d *Daemon) respondToPing(msg *protocol.Message, server *ManagedServer) {
