@@ -38,7 +38,7 @@ func New(cfg *config.Config, socketPath string, logger *slog.Logger) (*Daemon, e
 
 	servers := make(map[string]*ManagedServer)
 	for name, scfg := range cfg.Servers {
-		servers[name] = NewManagedServer(name, scfg)
+		servers[name] = NewManagedServer(name, scfg, logger.With("server", name))
 	}
 
 	return &Daemon{
@@ -405,7 +405,7 @@ func (d *Daemon) reloadConfig() {
 	// Add new servers
 	for name, scfg := range newCfg.Servers {
 		if _, exists := d.servers[name]; !exists {
-			d.servers[name] = NewManagedServer(name, scfg)
+			d.servers[name] = NewManagedServer(name, scfg, d.logger.With("server", name))
 			d.logger.Info("config reload: added server", "server", name)
 		}
 	}

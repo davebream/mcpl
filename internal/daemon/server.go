@@ -1,8 +1,10 @@
 package daemon
 
 import (
+	"bufio"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"sync"
@@ -72,14 +74,16 @@ type ManagedServer struct {
 	done             chan struct{}
 	serializeQueue   *SerializeQueue          // nil unless config.Serialize is true
 	serializeWaiters map[uint64]chan struct{} // globalID -> done channel; nil unless serialize
+	logger           *slog.Logger
 }
 
-func NewManagedServer(name string, cfg *config.ServerConfig) *ManagedServer {
+func NewManagedServer(name string, cfg *config.ServerConfig, logger *slog.Logger) *ManagedServer {
 	s := &ManagedServer{
 		name:        name,
 		config:      cfg,
 		state:       StateStopped,
 		connections: make(map[string]bool),
+		logger:      logger,
 	}
 	if cfg != nil && cfg.Serialize {
 		s.serializeQueue = NewSerializeQueue()
@@ -239,8 +243,8 @@ func (s *ManagedServer) Start(env map[string]string) error {
 	s.stderr = stderr
 	s.done = make(chan struct{})
 
-	// Drain stderr to prevent pipe buffer deadlock
-	go io.Copy(io.Discard, stderr)
+	// Drain stderr and log each line
+	go s.drainStderr(stderr)
 
 	return nil
 }
@@ -306,5 +310,16 @@ func (s *ManagedServer) WriteToStdin(data []byte) error {
 		stdin.Close()
 		<-done // wait for goroutine to finish (Write returns after Close)
 		return fmt.Errorf("server %s stdin write timed out after %s", s.name, stdinWriteTimeout)
+	}
+}
+
+func (s *ManagedServer) drainStderr(r io.Reader) {
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 4096), 64*1024) // 64KB max line
+	for scanner.Scan() {
+		line := scanner.Text()
+		if s.logger != nil {
+			s.logger.Debug("server stderr", "output", line)
+		}
 	}
 }

@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"bytes"
+	"log/slog"
 	"os"
 	"testing"
 	"time"
@@ -10,6 +12,46 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestManagedServerHasLogger(t *testing.T) {
+	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
+	cfg := &config.ServerConfig{Command: "echo"}
+	s := NewManagedServer("test", cfg, logger)
+	assert.NotNil(t, s.logger)
+}
+
+func TestDrainStderr(t *testing.T) {
+	// Create a buffer-backed logger to capture output
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	cfg := &config.ServerConfig{Command: "echo"}
+	s := NewManagedServer("test", cfg, logger)
+
+	// Create a pipe to simulate server stderr
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+
+	// Start draining in background
+	done := make(chan struct{})
+	go func() {
+		s.drainStderr(r)
+		close(done)
+	}()
+
+	// Write test lines to the pipe
+	w.Write([]byte("test error line 1\n"))
+	w.Write([]byte("test error line 2\n"))
+	w.Close() // signal EOF so drainStderr returns
+
+	<-done
+
+	// Verify the logger captured the lines
+	output := buf.String()
+	assert.Contains(t, output, "test error line 1")
+	assert.Contains(t, output, "test error line 2")
+	assert.Contains(t, output, "server stderr")
+}
+
 func TestWriteToStdinTimeout(t *testing.T) {
 	// Create a pipe where nobody reads the read end — fills buffer, blocks writes
 	r, w, err := os.Pipe()
@@ -17,7 +59,7 @@ func TestWriteToStdinTimeout(t *testing.T) {
 	defer r.Close()
 
 	cfg := &config.ServerConfig{Command: "echo"}
-	s := NewManagedServer("test", cfg)
+	s := NewManagedServer("test", cfg, nil)
 	s.mu.Lock()
 	s.stdin = w
 	s.mu.Unlock()
@@ -48,7 +90,7 @@ func TestWriteToStdinTimeout(t *testing.T) {
 func TestManagedServerSerializeQueue(t *testing.T) {
 	t.Run("created when serialize is true", func(t *testing.T) {
 		cfg := &config.ServerConfig{Command: "echo", Serialize: true}
-		s := NewManagedServer("test", cfg)
+		s := NewManagedServer("test", cfg, nil)
 		assert.NotNil(t, s.serializeQueue, "serialize queue should be created when config.Serialize is true")
 		assert.NotNil(t, s.serializeWaiters, "serialize waiters map should be created")
 		s.CloseSerializeQueue()
@@ -56,14 +98,14 @@ func TestManagedServerSerializeQueue(t *testing.T) {
 
 	t.Run("nil when serialize is false", func(t *testing.T) {
 		cfg := &config.ServerConfig{Command: "echo"}
-		s := NewManagedServer("test", cfg)
+		s := NewManagedServer("test", cfg, nil)
 		assert.Nil(t, s.serializeQueue, "serialize queue should be nil when config.Serialize is false")
 		assert.Nil(t, s.serializeWaiters, "serialize waiters map should be nil")
 	})
 
 	t.Run("closed on stop", func(t *testing.T) {
 		cfg := &config.ServerConfig{Command: "echo", Serialize: true}
-		s := NewManagedServer("test", cfg)
+		s := NewManagedServer("test", cfg, nil)
 		assert.NotNil(t, s.serializeQueue)
 		s.CloseSerializeQueue()
 		// No panic = success (queue's processLoop exited)
@@ -107,7 +149,7 @@ func TestServerStateString(t *testing.T) {
 
 func TestManagedServerTransition(t *testing.T) {
 	t.Run("successful transition", func(t *testing.T) {
-		s := NewManagedServer("test", nil)
+		s := NewManagedServer("test", nil, nil)
 		assert.Equal(t, StateStopped, s.State())
 
 		err := s.TransitionTo(StateStarting)
@@ -116,7 +158,7 @@ func TestManagedServerTransition(t *testing.T) {
 	})
 
 	t.Run("invalid transition returns error", func(t *testing.T) {
-		s := NewManagedServer("test", nil)
+		s := NewManagedServer("test", nil, nil)
 		err := s.TransitionTo(StateReady)
 		assert.Error(t, err)
 		assert.Equal(t, StateStopped, s.State()) // state unchanged
@@ -124,7 +166,7 @@ func TestManagedServerTransition(t *testing.T) {
 }
 
 func TestManagedServerConnections(t *testing.T) {
-	s := NewManagedServer("test", nil)
+	s := NewManagedServer("test", nil, nil)
 
 	s.AddConnection("conn-1")
 	s.AddConnection("conn-2")
@@ -138,7 +180,7 @@ func TestManagedServerConnections(t *testing.T) {
 }
 
 func TestManagedServerCrashTracking(t *testing.T) {
-	s := NewManagedServer("test", nil)
+	s := NewManagedServer("test", nil, nil)
 
 	s.RecordCrash()
 	assert.False(t, s.IsFailed())

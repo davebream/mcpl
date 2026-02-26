@@ -30,7 +30,7 @@ func TestHandleRootsListNoSessions(t *testing.T) {
 		stdinWriter.Close()
 	})
 
-	server := NewManagedServer("test-server", nil)
+	server := NewManagedServer("test-server", nil, nil)
 	server.stdin = stdinWriter
 
 	d := &Daemon{
@@ -56,7 +56,7 @@ func TestHandleRootsListNoSessions(t *testing.T) {
 func TestHandleRootsListForwardsToSession(t *testing.T) {
 	d, _, sessionScanner := testDaemonWithSession(t, "sess-1", "test-server")
 
-	server := NewManagedServer("test-server", nil)
+	server := NewManagedServer("test-server", nil, nil)
 
 	msg, err := protocol.ParseMessage([]byte(`{"jsonrpc":"2.0","id":5,"method":"roots/list"}`))
 	require.NoError(t, err)
@@ -70,7 +70,7 @@ func TestHandleRootsListForwardsToSession(t *testing.T) {
 func TestHandleSamplingForwardsToSession(t *testing.T) {
 	d, _, sessionScanner := testDaemonWithSession(t, "sess-1", "test-server")
 
-	server := NewManagedServer("test-server", nil)
+	server := NewManagedServer("test-server", nil, nil)
 
 	msg, err := protocol.ParseMessage([]byte(`{"jsonrpc":"2.0","id":6,"method":"sampling/createMessage","params":{}}`))
 	require.NoError(t, err)
@@ -88,7 +88,7 @@ func TestHandleSamplingNoSessions(t *testing.T) {
 		stdinWriter.Close()
 	})
 
-	server := NewManagedServer("test-server", nil)
+	server := NewManagedServer("test-server", nil, nil)
 	server.stdin = stdinWriter
 
 	d := &Daemon{

@@ -23,7 +23,7 @@ func NewServerManager(cfg *config.Config, logger *slog.Logger) *ServerManager {
 	}
 	servers := make(map[string]*ManagedServer)
 	for name, scfg := range cfg.Servers {
-		servers[name] = NewManagedServer(name, scfg)
+		servers[name] = NewManagedServer(name, scfg, logger.With("server", name))
 	}
 	return &ServerManager{
 		servers: servers,

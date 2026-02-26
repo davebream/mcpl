@@ -56,7 +56,7 @@ func TestDispatchResponse(t *testing.T) {
 	msg, err := protocol.ParseMessage([]byte(`{"jsonrpc":"2.0","id":1,"result":{"tools":[]}}`))
 	require.NoError(t, err)
 
-	server := NewManagedServer("srv", nil)
+	server := NewManagedServer("srv", nil, nil)
 	go d.dispatchResponse(msg, server)
 
 	require.True(t, scanner.Scan())
@@ -67,7 +67,7 @@ func TestDispatchResponse(t *testing.T) {
 func TestDispatchBroadcast(t *testing.T) {
 	d, _, scanner := testDaemonWithSession(t, "sess-1", "test-server")
 
-	server := NewManagedServer("test-server", nil)
+	server := NewManagedServer("test-server", nil, nil)
 
 	msg, err := protocol.ParseMessage([]byte(`{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}`))
 	require.NoError(t, err)
@@ -100,7 +100,7 @@ func TestDispatchPing(t *testing.T) {
 		stdinWriter.Close()
 	})
 
-	server := NewManagedServer("test-server", nil)
+	server := NewManagedServer("test-server", nil, nil)
 	server.stdin = stdinWriter
 
 	d := &Daemon{
