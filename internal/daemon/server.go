@@ -2,7 +2,11 @@ package daemon
 
 import (
 	"fmt"
+	"io"
+	"os"
+	"os/exec"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/davebream/mcpl/internal/config"
@@ -61,6 +65,11 @@ type ManagedServer struct {
 	connections map[string]bool
 	crashes     []time.Time
 	startedAt   time.Time
+	cmd         *exec.Cmd
+	stdin       io.WriteCloser
+	stdout      io.ReadCloser
+	stderr      io.ReadCloser
+	done        chan struct{}
 }
 
 func NewManagedServer(name string, cfg *config.ServerConfig) *ManagedServer {
@@ -147,4 +156,86 @@ func (s *ManagedServer) ResetCrashes() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.crashes = nil
+}
+
+func (s *ManagedServer) Start(env map[string]string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	cmd := exec.Command(s.config.Command, s.config.Args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+
+	if len(env) > 0 {
+		cmd.Env = os.Environ()
+		for k, v := range env {
+			cmd.Env = append(cmd.Env, k+"="+v)
+		}
+	}
+
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return fmt.Errorf("stdin pipe: %w", err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("stdout pipe: %w", err)
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("stderr pipe: %w", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start %s: %w", s.name, err)
+	}
+
+	s.cmd = cmd
+	s.stdin = stdin
+	s.stdout = stdout
+	s.stderr = stderr
+	s.done = make(chan struct{})
+
+	// Drain stderr to prevent pipe buffer deadlock
+	go io.Copy(io.Discard, stderr)
+
+	return nil
+}
+
+func (s *ManagedServer) Stop() {
+	s.mu.Lock()
+	cmd := s.cmd
+	s.mu.Unlock()
+
+	if cmd == nil || cmd.Process == nil {
+		return
+	}
+
+	// Kill process group
+	syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+
+	// Wait with timeout
+	select {
+	case <-s.done:
+	case <-time.After(10 * time.Second):
+		syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		<-s.done
+	}
+}
+
+func (s *ManagedServer) Wait() {
+	if s.cmd != nil {
+		s.cmd.Wait()
+		close(s.done)
+	}
+}
+
+func (s *ManagedServer) WriteToStdin(data []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stdin == nil {
+		return fmt.Errorf("server %s stdin not available", s.name)
+	}
+	line := append(data, '\n')
+	_, err := s.stdin.Write(line)
+	return err
 }
