@@ -22,7 +22,41 @@ Every time you open Claude Code, Claude Desktop, or Cursor, each session spawns 
 
 **mcpl** fixes this. It runs a single background daemon that manages your MCP servers as shared subprocesses. Editor sessions connect through lightweight shims instead of spawning their own servers. When you close a session, the servers keep running. When you open a new session, it connects instantly -- no cold starts, no restarts.
 
-The result: **~6x less memory**, instant reconnects, and servers that survive between sessions.
+The result: instant reconnects, servers that survive between sessions, and less memory.
+
+### Benchmarks
+
+Tested with a single MCP server ([`@modelcontextprotocol/server-filesystem`](https://www.npmjs.com/package/@modelcontextprotocol/server-filesystem)) on macOS (Apple Silicon). "Sessions" means concurrent editor windows connecting to the same server -- without mcpl each session spawns its own copy, with mcpl they all share one.
+
+**Memory** (private dirty via `vmmap`):
+
+| Sessions | Without mcpl | With mcpl | Savings |
+|:--------:|:------------:|:---------:|:-------:|
+| 2 | 433 MB | 206 MB | 2.1x |
+| 3 | 637 MB | 210 MB | 3.0x |
+| 5 | 1,078 MB | 220 MB | 4.9x |
+| 8 | 1,679 MB | 234 MB | 7.2x |
+
+Each additional session costs ~280 MB without mcpl (a full server copy) vs ~6 MB with mcpl (a lightweight Go shim). Savings scale linearly with session count.
+
+**Startup time:**
+
+| | Without mcpl | With mcpl |
+|---|:---:|:---:|
+| Every session | ~1.0s cold start | 0.003s (server already running) |
+
+Servers start once and stay running across sessions. Close your editor, reopen it -- instant reconnect, no cold start.
+
+<details>
+<summary>Methodology notes</summary>
+
+- Each "without mcpl" session spawns a fresh `npx` process (the same thing editors do)
+- Memory is measured via `vmmap -summary` (private dirty pages), which avoids double-counting shared libraries across processes. RSS numbers would show similar ratios but slightly inflated totals.
+- Startup time for mcpl sessions 2+ is the time to receive an `initialize` response. The daemon returns a cached response without hitting the server.
+- Test script: [`scripts/e2e_real_server.py`](scripts/e2e_real_server.py). Run it yourself with `python3 scripts/e2e_real_server.py`.
+- These numbers are for a single MCP server. With multiple servers (typical setups have 5-10), multiply the "without mcpl" column accordingly -- mcpl still runs one copy of each.
+
+</details>
 
 ## When you need this
 
