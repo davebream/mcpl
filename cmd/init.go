@@ -57,7 +57,11 @@ Use --restore to revert client configs from backups.`,
 
 		fmt.Printf("\nServers to import: %d\n", len(merged))
 		for name, sc := range merged {
-			fmt.Printf("  %s: %s %v\n", name, sc.Command, sc.Args)
+			if !sc.IsManaged() {
+				fmt.Printf("  %s: %s %v (unmanaged)\n", name, sc.Command, sc.Args)
+			} else {
+				fmt.Printf("  %s: %s %v\n", name, sc.Command, sc.Args)
+			}
 		}
 
 		if initDiff {
@@ -105,7 +109,7 @@ Use --restore to revert client configs from backups.`,
 				fmt.Fprintf(os.Stderr, "Warning: could not backup %s: %v\n", c.Path, err)
 				continue
 			}
-			if err := config.RewriteAllServers(c.Path, mcplBin); err != nil {
+			if err := config.RewriteAllServers(c.Path, mcplBin, cfg.Servers); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: could not rewrite %s: %v\n", c.Path, err)
 				continue
 			}

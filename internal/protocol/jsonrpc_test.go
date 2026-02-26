@@ -98,4 +98,14 @@ func TestIDMapper(t *testing.T) {
 		_, ok := m.Unmap(999)
 		assert.False(t, ok)
 	})
+
+	t.Run("NextID generates unique IDs without mapping", func(t *testing.T) {
+		m := NewIDMapper()
+		id1 := m.NextID()
+		id2 := m.NextID()
+		assert.NotEqual(t, id1, id2)
+		// NextID IDs should not be unmappable
+		_, ok := m.Unmap(id1)
+		assert.False(t, ok)
+	})
 }

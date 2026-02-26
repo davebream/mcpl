@@ -96,6 +96,12 @@ func (m *IDMapper) Unmap(globalID uint64) (*IDMapping, bool) {
 	return mapping, ok
 }
 
+// NextID generates a globally unique ID not tied to any session mapping.
+// Used for daemon-initiated messages (e.g., unsubscribe on session cleanup).
+func (m *IDMapper) NextID() uint64 {
+	return m.counter.Add(1)
+}
+
 // FindGlobalID searches for the global ID assigned to a given original ID and session.
 // Used for cancellation remapping where the shim references its local request ID.
 // Returns 0, false if no mapping is found (e.g., response already consumed the mapping).

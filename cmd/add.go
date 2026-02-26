@@ -11,7 +11,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var addJSON bool
+var (
+	addJSON      bool
+	addUnmanaged bool
+)
 
 var addCmd = &cobra.Command{
 	Use:   "add <name> <command> [args...]",
@@ -77,6 +80,11 @@ Examples:
 			cfg = config.DefaultConfig()
 		}
 
+		if addUnmanaged {
+			f := false
+			sc.Managed = &f
+		}
+
 		if _, exists := cfg.Servers[name]; exists {
 			return fmt.Errorf("server %q already exists. Use 'mcpl remove %s' first", name, name)
 		}
@@ -95,8 +103,12 @@ Examples:
 
 		clients := config.DetectClients()
 		for _, c := range clients {
-			if err := config.AddServerEntry(c.Path, name, mcplBin); err == nil {
-				fmt.Printf("Added shim to %s\n", c.Path)
+			if err := config.AddServerEntry(c.Path, name, mcplBin, sc); err == nil {
+				if sc.IsManaged() {
+					fmt.Printf("Added shim to %s\n", c.Path)
+				} else {
+					fmt.Printf("Added server to %s (unmanaged)\n", c.Path)
+				}
 			}
 		}
 
@@ -106,5 +118,6 @@ Examples:
 
 func init() {
 	addCmd.Flags().BoolVar(&addJSON, "json", false, "Parse server config from JSON")
+	addCmd.Flags().BoolVar(&addUnmanaged, "unmanaged", false, "Don't proxy through daemon (editor manages process directly)")
 	rootCmd.AddCommand(addCmd)
 }

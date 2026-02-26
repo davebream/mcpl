@@ -93,21 +93,29 @@ func TestClassifyServerMessage(t *testing.T) {
 func TestSubscriptionTracker(t *testing.T) {
 	t.Run("subscribe and lookup", func(t *testing.T) {
 		tracker := NewSubscriptionTracker()
-		tracker.Subscribe("file:///foo", "session-a")
-		tracker.Subscribe("file:///foo", "session-b")
+		assert.Equal(t, 1, tracker.Subscribe("file:///foo", "session-a"))
+		assert.Equal(t, 2, tracker.Subscribe("file:///foo", "session-b"))
 
 		sessions := tracker.Subscribers("file:///foo")
 		assert.ElementsMatch(t, []string{"session-a", "session-b"}, sessions)
 	})
 
-	t.Run("unsubscribe", func(t *testing.T) {
+	t.Run("unsubscribe returns remaining count", func(t *testing.T) {
 		tracker := NewSubscriptionTracker()
 		tracker.Subscribe("file:///foo", "session-a")
 		tracker.Subscribe("file:///foo", "session-b")
-		tracker.Unsubscribe("file:///foo", "session-a")
 
+		assert.Equal(t, 1, tracker.Unsubscribe("file:///foo", "session-a"))
 		sessions := tracker.Subscribers("file:///foo")
 		assert.ElementsMatch(t, []string{"session-b"}, sessions)
+
+		assert.Equal(t, 0, tracker.Unsubscribe("file:///foo", "session-b"))
+		assert.Empty(t, tracker.Subscribers("file:///foo"))
+	})
+
+	t.Run("unsubscribe nonexistent returns zero", func(t *testing.T) {
+		tracker := NewSubscriptionTracker()
+		assert.Equal(t, 0, tracker.Unsubscribe("file:///foo", "session-a"))
 	})
 
 	t.Run("remove session returns orphaned URIs", func(t *testing.T) {

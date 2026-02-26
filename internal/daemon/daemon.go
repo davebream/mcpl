@@ -38,7 +38,9 @@ func New(cfg *config.Config, socketPath string, logger *slog.Logger) (*Daemon, e
 
 	servers := make(map[string]*ManagedServer)
 	for name, scfg := range cfg.Servers {
-		servers[name] = NewManagedServer(name, scfg, logger.With("server", name))
+		if scfg.IsManaged() {
+			servers[name] = NewManagedServer(name, scfg, logger.With("server", name))
+		}
 	}
 
 	return &Daemon{
@@ -215,7 +217,18 @@ func (d *Daemon) handleConnection(conn net.Conn) {
 		}
 	}
 	d.mu.Unlock()
-	d.subs.RemoveSession(session.ID)
+	orphanedURIs := d.subs.RemoveSession(session.ID)
+	for _, uri := range orphanedURIs {
+		// Send resources/unsubscribe to server for URIs with no remaining subscribers
+		unsubMsg := &protocol.Message{
+			JSONRPC: "2.0",
+			ID:      json.RawMessage(fmt.Sprintf("%d", d.idMapper.NextID())),
+			Method:  "resources/unsubscribe",
+			Params:  json.RawMessage(fmt.Sprintf(`{"uri":%q}`, uri)),
+		}
+		data, _ := unsubMsg.Serialize()
+		server.WriteToStdin(data)
+	}
 
 	d.logger.Info("session disconnected", "session", session.ID, "server", req.Server)
 }
@@ -267,15 +280,38 @@ func (d *Daemon) sessionLoop(session *Session, server *ManagedServer) {
 			}
 		}
 
-		// Track resource subscriptions
+		// Track resource subscriptions — reference-count to avoid premature server unsubscribe.
+		// Only forward subscribe to server on first subscriber, unsubscribe on last.
 		if isSubscribeRequest(msg) {
 			if uri, ok := protocol.ExtractResourceURI(msg); ok {
-				d.subs.Subscribe(uri, session.ID)
+				count := d.subs.Subscribe(uri, session.ID)
+				if count > 1 {
+					// Server already subscribed — respond directly, don't forward
+					resp := &protocol.Message{
+						JSONRPC: "2.0",
+						ID:      msg.ID,
+						Result:  json.RawMessage(`{}`),
+					}
+					data, _ := resp.Serialize()
+					session.WriteLine(data)
+					continue
+				}
 			}
 		}
 		if isUnsubscribeRequest(msg) {
 			if uri, ok := protocol.ExtractResourceURI(msg); ok {
-				d.subs.Unsubscribe(uri, session.ID)
+				count := d.subs.Unsubscribe(uri, session.ID)
+				if count > 0 {
+					// Other sessions still subscribed — respond directly, don't forward
+					resp := &protocol.Message{
+						JSONRPC: "2.0",
+						ID:      msg.ID,
+						Result:  json.RawMessage(`{}`),
+					}
+					data, _ := resp.Serialize()
+					session.WriteLine(data)
+					continue
+				}
 			}
 		}
 
@@ -402,9 +438,9 @@ func (d *Daemon) reloadConfig() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	// Add new servers
+	// Add new servers (skip unmanaged)
 	for name, scfg := range newCfg.Servers {
-		if _, exists := d.servers[name]; !exists {
+		if _, exists := d.servers[name]; !exists && scfg.IsManaged() {
 			d.servers[name] = NewManagedServer(name, scfg, d.logger.With("server", name))
 			d.logger.Info("config reload: added server", "server", name)
 		}

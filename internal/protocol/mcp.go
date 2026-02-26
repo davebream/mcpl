@@ -75,24 +75,32 @@ func NewSubscriptionTracker() *SubscriptionTracker {
 	return &SubscriptionTracker{subscriptions: make(map[string]map[string]bool)}
 }
 
-func (s *SubscriptionTracker) Subscribe(uri, sessionID string) {
+// Subscribe adds a session to a URI's subscriber set.
+// Returns the subscriber count after adding (1 = first subscriber).
+func (s *SubscriptionTracker) Subscribe(uri, sessionID string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.subscriptions[uri] == nil {
 		s.subscriptions[uri] = make(map[string]bool)
 	}
 	s.subscriptions[uri][sessionID] = true
+	return len(s.subscriptions[uri])
 }
 
-func (s *SubscriptionTracker) Unsubscribe(uri, sessionID string) {
+// Unsubscribe removes a session from a URI's subscriber set.
+// Returns the subscriber count after removing (0 = last subscriber gone).
+func (s *SubscriptionTracker) Unsubscribe(uri, sessionID string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if sessions, ok := s.subscriptions[uri]; ok {
 		delete(sessions, sessionID)
 		if len(sessions) == 0 {
 			delete(s.subscriptions, uri)
+			return 0
 		}
+		return len(sessions)
 	}
+	return 0
 }
 
 // Subscribers returns all session IDs subscribed to a URI.

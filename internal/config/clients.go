@@ -137,6 +137,30 @@ func marshalShimEntry(mcplBin, serverName string) (json.RawMessage, error) {
 	})
 }
 
+// marshalDirectEntry returns the JSON for a direct (unmanaged) server entry —
+// the original command/args/env, bypassing the daemon.
+func marshalDirectEntry(sc *ServerConfig) (json.RawMessage, error) {
+	entry := map[string]interface{}{
+		"command": sc.Command,
+	}
+	if len(sc.Args) > 0 {
+		entry["args"] = sc.Args
+	}
+	if len(sc.Env) > 0 {
+		entry["env"] = sc.Env
+	}
+	return json.Marshal(entry)
+}
+
+// marshalServerEntry returns the appropriate JSON entry for a server —
+// shim for managed servers, direct command for unmanaged.
+func marshalServerEntry(serverName, mcplBin string, sc *ServerConfig) (json.RawMessage, error) {
+	if sc != nil && !sc.IsManaged() {
+		return marshalDirectEntry(sc)
+	}
+	return marshalShimEntry(mcplBin, serverName)
+}
+
 // RewriteClientConfig rewrites a single server entry in a client config file
 // to use the mcpl shim instead of the original command.
 func RewriteClientConfig(path, serverName, mcplBin string) error {
@@ -153,28 +177,31 @@ func RewriteClientConfig(path, serverName, mcplBin string) error {
 	})
 }
 
-// RewriteAllServers rewrites all server entries in a client config to use mcpl shims.
-func RewriteAllServers(path, mcplBin string) error {
-	return modifyClientServers(path, func(servers map[string]json.RawMessage) error {
-		for name := range servers {
-			shimJSON, err := marshalShimEntry(mcplBin, name)
+// RewriteAllServers rewrites all server entries in a client config.
+// Managed servers get shim entries; unmanaged servers get direct command entries.
+func RewriteAllServers(path, mcplBin string, mcplServers map[string]*ServerConfig) error {
+	return modifyClientServers(path, func(clientServers map[string]json.RawMessage) error {
+		for name := range clientServers {
+			sc := mcplServers[name] // may be nil for servers not in mcpl config
+			entry, err := marshalServerEntry(name, mcplBin, sc)
 			if err != nil {
 				return err
 			}
-			servers[name] = shimJSON
+			clientServers[name] = entry
 		}
 		return nil
 	})
 }
 
-// AddServerEntry adds a new mcpl shim entry to a client config file.
-func AddServerEntry(path, serverName, mcplBin string) error {
+// AddServerEntry adds a server entry to a client config file.
+// Managed servers get shim entries; unmanaged servers get direct command entries.
+func AddServerEntry(path, serverName, mcplBin string, sc *ServerConfig) error {
 	return modifyClientServers(path, func(servers map[string]json.RawMessage) error {
-		shimJSON, err := marshalShimEntry(mcplBin, serverName)
+		entry, err := marshalServerEntry(serverName, mcplBin, sc)
 		if err != nil {
 			return err
 		}
-		servers[serverName] = shimJSON
+		servers[serverName] = entry
 		return nil
 	})
 }

@@ -81,6 +81,10 @@ var doctorCmd = &cobra.Command{
 		// 5. Server commands in PATH
 		if cfg != nil {
 			for name, scfg := range cfg.Servers {
+				if !scfg.IsManaged() {
+					fmt.Printf("Server %s: OK (unmanaged, %s)\n", name, scfg.Command)
+					continue
+				}
 				if _, err := exec.LookPath(scfg.Command); err != nil {
 					fmt.Printf("Server %s: WARN (command %q not found in PATH)\n", name, scfg.Command)
 				} else {

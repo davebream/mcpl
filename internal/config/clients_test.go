@@ -137,37 +137,160 @@ func TestRewriteClientConfig(t *testing.T) {
 }
 
 func TestRewriteAllServers(t *testing.T) {
+	t.Run("all managed", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "config.json")
+
+		original := map[string]interface{}{
+			"mcpServers": map[string]interface{}{
+				"a": map[string]interface{}{"command": "npx", "args": []interface{}{"a-server"}},
+				"b": map[string]interface{}{"command": "node", "args": []interface{}{"b-server.js"}},
+			},
+			"otherSetting": "preserved",
+		}
+		data, _ := json.MarshalIndent(original, "", "  ")
+		os.WriteFile(path, data, 0600)
+
+		mcplServers := map[string]*ServerConfig{
+			"a": {Command: "npx", Args: []string{"a-server"}},
+			"b": {Command: "node", Args: []string{"b-server.js"}},
+		}
+
+		err := RewriteAllServers(path, "/usr/local/bin/mcpl", mcplServers)
+		require.NoError(t, err)
+
+		rewritten, _ := os.ReadFile(path)
+		var result map[string]interface{}
+		json.Unmarshal(rewritten, &result)
+
+		assert.Equal(t, "preserved", result["otherSetting"])
+
+		servers := result["mcpServers"].(map[string]interface{})
+		for _, name := range []string{"a", "b"} {
+			server := servers[name].(map[string]interface{})
+			assert.Equal(t, "/usr/local/bin/mcpl", server["command"])
+			args := server["args"].([]interface{})
+			assert.Equal(t, "connect", args[0])
+			assert.Equal(t, name, args[1])
+		}
+	})
+
+	t.Run("mixed managed and unmanaged", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "config.json")
+
+		original := map[string]interface{}{
+			"mcpServers": map[string]interface{}{
+				"context7":   map[string]interface{}{"command": "npx", "args": []interface{}{"-y", "@upstash/context7-mcp"}},
+				"playwright": map[string]interface{}{"command": "npx", "args": []interface{}{"-y", "@playwright/mcp"}},
+			},
+		}
+		data, _ := json.MarshalIndent(original, "", "  ")
+		os.WriteFile(path, data, 0600)
+
+		f := false
+		mcplServers := map[string]*ServerConfig{
+			"context7":   {Command: "npx", Args: []string{"-y", "@upstash/context7-mcp"}},
+			"playwright": {Command: "npx", Args: []string{"-y", "@playwright/mcp"}, Managed: &f},
+		}
+
+		err := RewriteAllServers(path, "/usr/local/bin/mcpl", mcplServers)
+		require.NoError(t, err)
+
+		rewritten, _ := os.ReadFile(path)
+		var result map[string]interface{}
+		json.Unmarshal(rewritten, &result)
+
+		servers := result["mcpServers"].(map[string]interface{})
+
+		// Managed server gets shim
+		ctx7 := servers["context7"].(map[string]interface{})
+		assert.Equal(t, "/usr/local/bin/mcpl", ctx7["command"])
+
+		// Unmanaged server gets direct command
+		pw := servers["playwright"].(map[string]interface{})
+		assert.Equal(t, "npx", pw["command"])
+		args := pw["args"].([]interface{})
+		assert.Equal(t, "-y", args[0])
+		assert.Equal(t, "@playwright/mcp", args[1])
+	})
+}
+
+func TestIsManaged(t *testing.T) {
+	// nil Managed = default managed
+	assert.True(t, (&ServerConfig{Command: "npx"}).IsManaged())
+
+	// explicit true
+	tr := true
+	assert.True(t, (&ServerConfig{Command: "npx", Managed: &tr}).IsManaged())
+
+	// explicit false
+	f := false
+	assert.False(t, (&ServerConfig{Command: "npx", Managed: &f}).IsManaged())
+}
+
+func TestAddServerEntry_Unmanaged(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.json")
 
 	original := map[string]interface{}{
-		"mcpServers": map[string]interface{}{
-			"a": map[string]interface{}{"command": "npx", "args": []interface{}{"a-server"}},
-			"b": map[string]interface{}{"command": "node", "args": []interface{}{"b-server.js"}},
-		},
-		"otherSetting": "preserved",
+		"mcpServers": map[string]interface{}{},
 	}
 	data, _ := json.MarshalIndent(original, "", "  ")
 	os.WriteFile(path, data, 0600)
 
-	err := RewriteAllServers(path, "/usr/local/bin/mcpl")
+	f := false
+	sc := &ServerConfig{
+		Command: "npx",
+		Args:    []string{"-y", "@playwright/mcp"},
+		Managed: &f,
+	}
+
+	err := AddServerEntry(path, "playwright", "/usr/local/bin/mcpl", sc)
 	require.NoError(t, err)
 
 	rewritten, _ := os.ReadFile(path)
 	var result map[string]interface{}
 	json.Unmarshal(rewritten, &result)
 
-	// Other settings preserved
-	assert.Equal(t, "preserved", result["otherSetting"])
+	servers := result["mcpServers"].(map[string]interface{})
+	pw := servers["playwright"].(map[string]interface{})
+	// Unmanaged: should use direct command, not mcpl shim
+	assert.Equal(t, "npx", pw["command"])
+	args := pw["args"].([]interface{})
+	assert.Equal(t, "-y", args[0])
+	assert.Equal(t, "@playwright/mcp", args[1])
+}
+
+func TestAddServerEntry_Managed(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+
+	original := map[string]interface{}{
+		"mcpServers": map[string]interface{}{},
+	}
+	data, _ := json.MarshalIndent(original, "", "  ")
+	os.WriteFile(path, data, 0600)
+
+	sc := &ServerConfig{
+		Command: "npx",
+		Args:    []string{"-y", "@upstash/context7-mcp"},
+	}
+
+	err := AddServerEntry(path, "context7", "/usr/local/bin/mcpl", sc)
+	require.NoError(t, err)
+
+	rewritten, _ := os.ReadFile(path)
+	var result map[string]interface{}
+	json.Unmarshal(rewritten, &result)
 
 	servers := result["mcpServers"].(map[string]interface{})
-	for _, name := range []string{"a", "b"} {
-		server := servers[name].(map[string]interface{})
-		assert.Equal(t, "/usr/local/bin/mcpl", server["command"])
-		args := server["args"].([]interface{})
-		assert.Equal(t, "connect", args[0])
-		assert.Equal(t, name, args[1])
-	}
+	ctx7 := servers["context7"].(map[string]interface{})
+	// Managed: should use mcpl shim
+	assert.Equal(t, "/usr/local/bin/mcpl", ctx7["command"])
+	args := ctx7["args"].([]interface{})
+	assert.Equal(t, "connect", args[0])
+	assert.Equal(t, "context7", args[1])
 }
 
 func TestIsAlreadyMCPL(t *testing.T) {

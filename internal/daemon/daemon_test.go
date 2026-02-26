@@ -118,3 +118,22 @@ func TestDaemonRejectsUnknownServer(t *testing.T) {
 	assert.Equal(t, "error", resp.Type)
 	assert.Equal(t, "unknown_server", resp.Code)
 }
+
+func TestDaemonSkipsUnmanagedServers(t *testing.T) {
+	f := false
+	cfg := &config.Config{
+		Servers: map[string]*config.ServerConfig{
+			"managed":   {Command: "/bin/cat"},
+			"unmanaged": {Command: "npx", Args: []string{"-y", "@playwright/mcp"}, Managed: &f},
+		},
+	}
+
+	socketPath := testSocketPath(t)
+	d, err := New(cfg, socketPath, nil)
+	require.NoError(t, err)
+
+	// Managed server should be in the server map
+	assert.Contains(t, d.servers, "managed")
+	// Unmanaged server should NOT be in the server map
+	assert.NotContains(t, d.servers, "unmanaged")
+}

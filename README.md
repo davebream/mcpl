@@ -10,7 +10,7 @@
     <a href="#configuration">Configuration</a>
   </p>
   <p align="center">
-    <img src="https://img.shields.io/badge/Go-1.22+-00ADD8?logo=go&logoColor=white" alt="Go 1.22+" />
+    <img src="https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go&logoColor=white" alt="Go 1.25+" />
     <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License" />
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey" alt="macOS | Linux" />
   </p>
@@ -184,6 +184,9 @@ Add a new MCP server to mcpl and all detected editor configs.
 # From command line
 mcpl add context7 npx -y @upstash/context7-mcp
 
+# Stateful server — editor manages process directly, no multiplexing
+mcpl add playwright npx -y @playwright/mcp --unmanaged
+
 # From JSON
 echo '{"command":"npx","args":["-y","@upstash/context7-mcp"]}' | mcpl add context7 --json -
 ```
@@ -226,7 +229,7 @@ mcpl doctor
 # Daemon:  OK (PID 12345)
 # Connect: OK
 # Server context7: OK (npx)
-# Server playwright: OK (npx)
+# Server playwright: OK (unmanaged, npx)
 ```
 
 ## Configuration
@@ -254,7 +257,7 @@ Override with the `MCPL_CONFIG_DIR` environment variable.
     },
     "filesystem": {
       "command": "npx",
-      "args": ["-y", "@anthropic/mcp-server-filesystem", "/home/user"],
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/home/user"],
       "env": {
         "NODE_ENV": "production",
         "API_KEY": "$MY_API_KEY"
@@ -262,8 +265,8 @@ Override with the `MCPL_CONFIG_DIR` environment variable.
     },
     "playwright": {
       "command": "npx",
-      "args": ["-y", "@anthropic/mcp-server-playwright"],
-      "serialize": true
+      "args": ["-y", "@playwright/mcp"],
+      "managed": false
     }
   }
 }
@@ -285,6 +288,7 @@ Override with the `MCPL_CONFIG_DIR` environment variable.
 | `args` | no | Arguments array |
 | `env` | no | Environment variables. Use `$VAR` syntax to reference the host environment at spawn time -- keeps secrets out of the config file. |
 | `serialize` | no | Force sequential request processing for servers that can't handle concurrent requests |
+| `managed` | no | Set to `false` for stateful servers (e.g. playwright). mcpl tracks the server but editors manage the process directly -- no multiplexing. Default: `true`. |
 
 ## Supported clients
 
@@ -310,6 +314,17 @@ After `mcpl init --apply` or `mcpl add`, your editor configs will contain shim e
 }
 ```
 
+## Limitations
+
+mcpl multiplexes multiple editor sessions through a single server process. This works well for stateless tool servers (the common case), but has inherent tradeoffs:
+
+- **Capability negotiation happens once.** Only the first session's `initialize` reaches the server. Later sessions get a cached response. If your editors advertise different MCP capabilities, the server only knows about the first one's.
+- **Server-initiated requests go to one session.** When a server sends `roots/list` or `sampling/createMessage`, the daemon routes it to one connected session, not all of them. The server sees one client's roots, not a merged view.
+- **No per-session state isolation.** If a server maintains internal state (caches, conversation context), all sessions share it. One session's actions can affect another's responses. Use `"managed": false` for stateful servers like playwright to let your editor manage them directly.
+- **Single point of failure.** Without mcpl, one editor crash only kills that editor's servers. With mcpl, a daemon crash disconnects all sessions at once. The daemon restarts automatically on the next connection, but all servers cold-start.
+
+These tradeoffs don't matter for most MCP servers (tool providers like context7, filesystem are stateless). For servers that maintain per-session state (like playwright), set `"managed": false` so each editor manages its own instance.
+
 ## Troubleshooting
 
 **Daemon won't start?**
@@ -326,11 +341,11 @@ mcpl stop             # Stop the daemon
 
 **Server keeps crashing?**
 
-Check the logs with `mcpl logs -f`. If a server crashes 3 times within 60 seconds, it's marked as failed and won't auto-restart until the next `mcpl connect`.
+Check the logs with `mcpl logs -f`. If a server crashes 3 times within 60 seconds, it's marked as failed and won't auto-restart. Run `mcpl restart` to reset the crash counter and try again.
 
 **Config changes not taking effect?**
 
-The daemon re-reads the config on each new connection. Just open a new editor session -- no restart needed.
+The daemon picks up newly added servers on each new connection -- just open a new editor session. For changes to existing servers (command, args, env), run `mcpl restart` to apply.
 
 ## License
 

@@ -12,6 +12,13 @@ type ServerConfig struct {
 	Args      []string          `json:"args,omitempty"`
 	Env       map[string]string `json:"env,omitempty"`
 	Serialize bool              `json:"serialize,omitempty"`
+	Managed   *bool             `json:"managed,omitempty"` // nil = true (default managed)
+}
+
+// IsManaged returns true if the server should be proxied through the daemon.
+// Defaults to true when Managed is nil (not set in config).
+func (sc *ServerConfig) IsManaged() bool {
+	return sc.Managed == nil || *sc.Managed
 }
 
 type Config struct {
