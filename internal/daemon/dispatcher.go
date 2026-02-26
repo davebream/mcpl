@@ -167,6 +167,13 @@ func (d *Daemon) handleServerRequest(msg *protocol.Message, server *ManagedServe
 		d.handleSampling(msg, server)
 	default:
 		d.logger.Warn("unknown server request", "method", msg.Method)
+		errResp := &protocol.Message{
+			JSONRPC: "2.0",
+			ID:      msg.ID,
+			Error:   json.RawMessage(`{"code":-32601,"message":"method not found"}`),
+		}
+		data, _ := errResp.Serialize()
+		server.WriteToStdin(data)
 	}
 }
 

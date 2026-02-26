@@ -5,6 +5,11 @@ import (
 	"time"
 )
 
+// IdleTracker tracks connection activity and determines whether an entity
+// (server or daemon) has been idle long enough to trigger shutdown.
+// A freshly created tracker starts the idle clock immediately — if no
+// connections arrive within the timeout, IsIdle returns true.
+// It is safe for concurrent use.
 type IdleTracker struct {
 	mu          sync.Mutex
 	timeout     time.Duration

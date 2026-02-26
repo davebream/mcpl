@@ -67,6 +67,20 @@ func TestHandleRootsListForwardsToSession(t *testing.T) {
 	assert.Contains(t, sessionScanner.Text(), `roots/list`)
 }
 
+func TestHandleSamplingForwardsToSession(t *testing.T) {
+	d, _, sessionScanner := testDaemonWithSession(t, "sess-1", "test-server")
+
+	server := NewManagedServer("test-server", nil)
+
+	msg, err := protocol.ParseMessage([]byte(`{"jsonrpc":"2.0","id":6,"method":"sampling/createMessage","params":{}}`))
+	require.NoError(t, err)
+
+	go d.handleSampling(msg, server)
+
+	require.True(t, sessionScanner.Scan())
+	assert.Contains(t, sessionScanner.Text(), `sampling/createMessage`)
+}
+
 func TestHandleSamplingNoSessions(t *testing.T) {
 	serverConn, stdinWriter := net.Pipe()
 	t.Cleanup(func() {
