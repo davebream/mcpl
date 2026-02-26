@@ -160,6 +160,67 @@ func (d *Daemon) respondToPing(msg *protocol.Message, server *ManagedServer) {
 }
 
 func (d *Daemon) handleServerRequest(msg *protocol.Message, server *ManagedServer) {
-	// Implemented in Task 10d
+	switch msg.Method {
+	case "roots/list":
+		d.handleRootsList(msg, server)
+	case "sampling/createMessage":
+		d.handleSampling(msg, server)
+	default:
+		d.logger.Warn("unknown server request", "method", msg.Method)
+	}
+}
+
+// handleRootsList fans out roots/list to all connected shims.
+// v1: forwards to first session only. Full fan-out-and-aggregate deferred to v2.
+func (d *Daemon) handleRootsList(msg *protocol.Message, server *ManagedServer) {
+	d.mu.Lock()
+	var sessions []*Session
+	for _, session := range d.sessions {
+		if session.ServerName == server.name {
+			sessions = append(sessions, session)
+		}
+	}
+	d.mu.Unlock()
+
+	if len(sessions) == 0 {
+		resp := &protocol.Message{
+			JSONRPC: "2.0",
+			ID:      msg.ID,
+			Result:  json.RawMessage(`{"roots":[]}`),
+		}
+		data, _ := resp.Serialize()
+		server.WriteToStdin(data)
+		return
+	}
+
+	data, _ := msg.Serialize()
+	sessions[0].WriteLine(data)
+}
+
+// handleSampling routes sampling/createMessage to one connected shim.
+func (d *Daemon) handleSampling(msg *protocol.Message, server *ManagedServer) {
+	d.mu.Lock()
+	var target *Session
+	for _, session := range d.sessions {
+		if session.ServerName == server.name {
+			target = session
+			break
+		}
+	}
+	d.mu.Unlock()
+
+	if target == nil {
+		errResp := &protocol.Message{
+			JSONRPC: "2.0",
+			ID:      msg.ID,
+			Error:   json.RawMessage(`{"code":-32601,"message":"no connected client supports sampling"}`),
+		}
+		data, _ := errResp.Serialize()
+		server.WriteToStdin(data)
+		return
+	}
+
+	data, _ := msg.Serialize()
+	target.WriteLine(data)
 }
 
