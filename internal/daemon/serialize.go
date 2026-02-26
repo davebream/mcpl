@@ -11,6 +11,7 @@ type SerializeQueue struct {
 	notify chan struct{}
 	closed chan struct{}
 	nextID atomic.Uint64
+	wg     sync.WaitGroup
 }
 
 type queueEntry struct {
@@ -24,11 +25,20 @@ func NewSerializeQueue() *SerializeQueue {
 		notify: make(chan struct{}, 1),
 		closed: make(chan struct{}),
 	}
-	go q.processLoop()
+	q.wg.Add(1)
+	go func() {
+		defer q.wg.Done()
+		q.processLoop()
+	}()
 	return q
 }
 
 func (q *SerializeQueue) Enqueue(fn func()) {
+	select {
+	case <-q.closed:
+		return // queue shut down, discard
+	default:
+	}
 	q.mu.Lock()
 	q.queue = append(q.queue, queueEntry{fn: fn})
 	q.mu.Unlock()
@@ -39,6 +49,11 @@ func (q *SerializeQueue) Enqueue(fn func()) {
 }
 
 func (q *SerializeQueue) EnqueueCancellable(fn func()) uint64 {
+	select {
+	case <-q.closed:
+		return 0 // queue shut down, discard
+	default:
+	}
 	id := q.nextID.Add(1)
 	q.mu.Lock()
 	q.queue = append(q.queue, queueEntry{id: id, fn: fn})
@@ -70,12 +85,19 @@ func (q *SerializeQueue) processLoop() {
 		}
 
 		for {
+			select {
+			case <-q.closed:
+				return
+			default:
+			}
+
 			q.mu.Lock()
 			if len(q.queue) == 0 {
 				q.mu.Unlock()
 				break
 			}
 			entry := q.queue[0]
+			q.queue[0] = queueEntry{} // zero slot so fn closure can be GC'd
 			q.queue = q.queue[1:]
 			q.mu.Unlock()
 
@@ -88,4 +110,5 @@ func (q *SerializeQueue) processLoop() {
 
 func (q *SerializeQueue) Close() {
 	close(q.closed)
+	q.wg.Wait() // block until processLoop exits
 }
