@@ -4,9 +4,76 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"sync"
+	"time"
 
 	"github.com/davebream/mcpl/internal/protocol"
 )
+
+// rootsAggregator collects roots/list responses from multiple sessions and
+// merges them into a single response sent back to the server.
+type rootsAggregator struct {
+	serverID  json.RawMessage // Server's original request ID
+	server    *ManagedServer
+	mu        sync.Mutex
+	remaining int32
+	roots     []json.RawMessage // individual root objects collected
+	done      bool
+}
+
+// collect adds roots from one session's response. Returns true if all sessions responded.
+func (a *rootsAggregator) collect(result json.RawMessage) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.done {
+		return false
+	}
+
+	var parsed struct {
+		Roots []json.RawMessage `json:"roots"`
+	}
+	if err := json.Unmarshal(result, &parsed); err == nil {
+		a.roots = append(a.roots, parsed.Roots...)
+	}
+
+	a.remaining--
+	return a.remaining <= 0
+}
+
+// finalize sends the merged response to the server (once).
+func (a *rootsAggregator) finalize() {
+	a.mu.Lock()
+	if a.done {
+		a.mu.Unlock()
+		return
+	}
+	a.done = true
+	a.mu.Unlock()
+
+	// Deduplicate roots by URI
+	seen := make(map[string]bool)
+	unique := make([]json.RawMessage, 0, len(a.roots))
+	for _, root := range a.roots {
+		var r struct {
+			URI string `json:"uri"`
+		}
+		if json.Unmarshal(root, &r) == nil && !seen[r.URI] {
+			seen[r.URI] = true
+			unique = append(unique, root)
+		}
+	}
+
+	rootsArray, _ := json.Marshal(unique)
+	result := json.RawMessage(fmt.Sprintf(`{"roots":%s}`, rootsArray))
+
+	resp := &protocol.Message{
+		JSONRPC: "2.0",
+		ID:      a.serverID,
+		Result:  result,
+	}
+	data, _ := resp.Serialize()
+	a.server.WriteToStdin(data)
+}
 
 // startServerReader starts a goroutine that reads from server stdout
 // and dispatches messages to the correct shim sessions.
@@ -199,12 +266,20 @@ func (d *Daemon) handleServerRequest(msg *protocol.Message, server *ManagedServe
 	}
 }
 
-// handleRootsList fans out roots/list to all connected shims.
-// v1: forwards to first session only. Full fan-out-and-aggregate deferred to v2.
+// handleRootsList fans out roots/list to all sessions that support roots,
+// merges and deduplicates the results by URI, and responds to the server.
 func (d *Daemon) handleRootsList(msg *protocol.Message, server *ManagedServer) {
 	sessions := d.sessionsForServer(server.name)
 
-	if len(sessions) == 0 {
+	// Filter to sessions that support roots
+	var capable []*Session
+	for _, s := range sessions {
+		if s.Capabilities.Roots {
+			capable = append(capable, s)
+		}
+	}
+
+	if len(capable) == 0 {
 		resp := &protocol.Message{
 			JSONRPC: "2.0",
 			ID:      msg.ID,
@@ -215,15 +290,48 @@ func (d *Daemon) handleRootsList(msg *protocol.Message, server *ManagedServer) {
 		return
 	}
 
-	data, _ := msg.Serialize()
-	sessions[0].WriteLine(data)
+	agg := &rootsAggregator{
+		serverID:  msg.ID,
+		server:    server,
+		remaining: int32(len(capable)),
+		roots:     make([]json.RawMessage, 0),
+	}
+
+	d.mu.Lock()
+	for _, s := range capable {
+		fanoutID := d.idMapper.NextID()
+		perSessionMsg := &protocol.Message{
+			JSONRPC: "2.0",
+			ID:      json.RawMessage(fmt.Sprintf("%d", fanoutID)),
+			Method:  "roots/list",
+		}
+		d.pendingFanout[fanoutID] = agg
+		data, _ := perSessionMsg.Serialize()
+		s.WriteLine(data)
+	}
+	d.mu.Unlock()
+
+	// Timeout — finalize after 5s if not all sessions responded
+	go func() {
+		time.Sleep(5 * time.Second)
+		agg.finalize()
+	}()
 }
 
-// handleSampling routes sampling/createMessage to one connected shim.
+// handleSampling routes sampling/createMessage to one session that supports sampling.
 func (d *Daemon) handleSampling(msg *protocol.Message, server *ManagedServer) {
 	sessions := d.sessionsForServer(server.name)
 
-	if len(sessions) == 0 {
+	// Find a session that supports sampling
+	var target *Session
+	for _, s := range sessions {
+		if s.Capabilities.Sampling {
+			target = s
+			break
+		}
+	}
+
+	if target == nil {
 		errResp := &protocol.Message{
 			JSONRPC: "2.0",
 			ID:      msg.ID,
@@ -234,7 +342,8 @@ func (d *Daemon) handleSampling(msg *protocol.Message, server *ManagedServer) {
 		return
 	}
 
+	// Forward directly — server's ID preserved, response flows back via sessionLoop
 	data, _ := msg.Serialize()
-	sessions[0].WriteLine(data)
+	target.WriteLine(data)
 }
 

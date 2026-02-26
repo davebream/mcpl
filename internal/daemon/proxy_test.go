@@ -50,3 +50,42 @@ func TestIsInitializedNotification(t *testing.T) {
 	msg, _ := protocol.ParseMessage([]byte(`{"jsonrpc":"2.0","method":"initialized"}`))
 	assert.True(t, isInitializedNotification(msg))
 }
+
+func TestRewriteInitCapabilities(t *testing.T) {
+	msg, _ := protocol.ParseMessage([]byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}`))
+
+	rewriteInitCapabilities(msg)
+
+	// Verify maximal capabilities are set
+	var params map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(msg.Params, &params))
+
+	var caps struct {
+		Roots    *json.RawMessage `json:"roots"`
+		Sampling *json.RawMessage `json:"sampling"`
+	}
+	require.NoError(t, json.Unmarshal(params["capabilities"], &caps))
+	assert.NotNil(t, caps.Roots, "roots capability should be set")
+	assert.NotNil(t, caps.Sampling, "sampling capability should be set")
+
+	// Verify other fields preserved
+	assert.Contains(t, string(params["protocolVersion"]), "2025-03-26")
+	assert.Contains(t, string(params["clientInfo"]), "test")
+}
+
+func TestRewriteInitCapabilitiesPreservesExistingFields(t *testing.T) {
+	msg, _ := protocol.ParseMessage([]byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{"roots":{"listChanged":false}},"clientInfo":{"name":"claude","version":"2.0"}}}`))
+
+	rewriteInitCapabilities(msg)
+
+	var params map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(msg.Params, &params))
+
+	// protocolVersion and clientInfo should be preserved
+	assert.JSONEq(t, `"2025-03-26"`, string(params["protocolVersion"]))
+	assert.Contains(t, string(params["clientInfo"]), "claude")
+
+	// capabilities should be maximal
+	assert.Contains(t, string(params["capabilities"]), `"roots"`)
+	assert.Contains(t, string(params["capabilities"]), `"sampling"`)
+}

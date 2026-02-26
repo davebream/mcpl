@@ -9,12 +9,36 @@ import (
 	"github.com/google/uuid"
 )
 
+// SessionCapabilities tracks what each session advertised in its initialize request.
+type SessionCapabilities struct {
+	Roots    bool // Client supports roots/list
+	Sampling bool // Client supports sampling/createMessage
+}
+
 type Session struct {
-	ID         string
-	Conn       net.Conn
-	ServerName string
-	scanner    *bufio.Scanner
-	mu         sync.Mutex
+	ID           string
+	Conn         net.Conn
+	ServerName   string
+	Capabilities SessionCapabilities
+	scanner      *bufio.Scanner
+	mu           sync.Mutex
+}
+
+// ParseClientCapabilities extracts capability flags from initialize params.
+func ParseClientCapabilities(params json.RawMessage) SessionCapabilities {
+	var p struct {
+		Capabilities struct {
+			Roots    *json.RawMessage `json:"roots"`
+			Sampling *json.RawMessage `json:"sampling"`
+		} `json:"capabilities"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return SessionCapabilities{}
+	}
+	return SessionCapabilities{
+		Roots:    p.Capabilities.Roots != nil,
+		Sampling: p.Capabilities.Sampling != nil,
+	}
 }
 
 func NewSession(conn net.Conn, serverName string) *Session {

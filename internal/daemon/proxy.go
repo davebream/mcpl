@@ -49,6 +49,21 @@ func isCancellationNotification(msg *protocol.Message) bool {
 	return msg.IsNotification() && msg.Method == "notifications/cancelled"
 }
 
+// rewriteInitCapabilities replaces the client's capabilities in an initialize
+// request with maximal capabilities so the server enables all features.
+func rewriteInitCapabilities(msg *protocol.Message) {
+	var params map[string]json.RawMessage
+	if err := json.Unmarshal(msg.Params, &params); err != nil {
+		return
+	}
+	params["capabilities"] = json.RawMessage(`{"roots":{"listChanged":true},"sampling":{}}`)
+	newParams, err := json.Marshal(params)
+	if err != nil {
+		return
+	}
+	msg.Params = newParams
+}
+
 // handleCancellation remaps the requestId in a cancellation notification
 // from the shim's local ID to the global ID the server knows, then forwards.
 func handleCancellation(msg *protocol.Message, mapper *protocol.IDMapper, sessionID string, server *ManagedServer) {

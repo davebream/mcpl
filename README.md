@@ -318,12 +318,10 @@ After `mcpl init --apply` or `mcpl add`, your editor configs will contain shim e
 
 mcpl multiplexes multiple editor sessions through a single server process. This works well for stateless tool servers (the common case), but has inherent tradeoffs:
 
-- **Capability negotiation happens once.** Only the first session's `initialize` reaches the server. Later sessions get a cached response. If your editors advertise different MCP capabilities, the server only knows about the first one's.
-- **Server-initiated requests go to one session.** When a server sends `roots/list` or `sampling/createMessage`, the daemon routes it to one connected session, not all of them. The server sees one client's roots, not a merged view.
-- **No per-session state isolation.** If a server maintains internal state (caches, conversation context), all sessions share it. One session's actions can affect another's responses. Use `"managed": false` for stateful servers like playwright to let your editor manage them directly.
+- **No per-session state isolation.** If a server maintains internal state (caches, conversation context), all sessions share it. One session's actions can affect another's responses.
 - **Single point of failure.** Without mcpl, one editor crash only kills that editor's servers. With mcpl, a daemon crash disconnects all sessions at once. The daemon restarts automatically on the next connection, but all servers cold-start.
 
-These tradeoffs don't matter for most MCP servers (tool providers like context7, filesystem are stateless). For servers that maintain per-session state (like playwright), set `"managed": false` so each editor manages its own instance.
+These tradeoffs don't matter for most MCP servers (tool providers like context7, filesystem are stateless). For servers where shared state is a problem, set `"managed": false` so each editor manages its own instance.
 
 ## Troubleshooting
 

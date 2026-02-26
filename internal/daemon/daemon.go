@@ -27,8 +27,9 @@ type Daemon struct {
 	idMapper       *protocol.IDMapper
 	initCache      *protocol.InitCache
 	subs           *protocol.SubscriptionTracker
-	progressTokens map[string]string // progressToken -> sessionID
-	pendingInit    map[uint64]string // globalID -> serverName (for caching init responses)
+	progressTokens map[string]string              // progressToken -> sessionID
+	pendingInit    map[uint64]string              // globalID -> serverName (for caching init responses)
+	pendingFanout  map[uint64]*rootsAggregator    // fanout ID -> aggregator
 }
 
 func New(cfg *config.Config, socketPath string, logger *slog.Logger) (*Daemon, error) {
@@ -54,6 +55,7 @@ func New(cfg *config.Config, socketPath string, logger *slog.Logger) (*Daemon, e
 		subs:           protocol.NewSubscriptionTracker(),
 		progressTokens: make(map[string]string),
 		pendingInit:    make(map[uint64]string),
+		pendingFanout:  make(map[uint64]*rootsAggregator),
 	}, nil
 }
 
@@ -120,6 +122,7 @@ func (d *Daemon) shutdown() {
 		session.Close()
 	}
 	d.pendingInit = make(map[uint64]string)
+	d.pendingFanout = make(map[uint64]*rootsAggregator)
 	d.mu.Unlock()
 
 	// Close serialize queues (closes waiters first, then waits for processLoop exit)
@@ -246,10 +249,42 @@ func (d *Daemon) sessionLoop(session *Session, server *ManagedServer) {
 			continue
 		}
 
+		// Intercept fan-out responses (e.g., roots/list) before they reach the server
+		if msg.IsResponse() {
+			var fanoutID uint64
+			if json.Unmarshal(msg.ID, &fanoutID) == nil {
+				d.mu.Lock()
+				agg, isFanout := d.pendingFanout[fanoutID]
+				if isFanout {
+					delete(d.pendingFanout, fanoutID)
+				}
+				d.mu.Unlock()
+
+				if isFanout {
+					if allDone := agg.collect(msg.Result); allDone {
+						agg.finalize()
+					}
+					continue
+				}
+			}
+			// Not a fan-out response — forward to server as before
+			data, _ := msg.Serialize()
+			server.WriteToStdin(data)
+			continue
+		}
+
 		isInit := isInitializeRequest(msg)
 
 		// Intercept initialize request — return cached response if available
 		if isInit {
+			// Parse and store client capabilities regardless of cache status
+			session.Capabilities = ParseClientCapabilities(msg.Params)
+			d.logger.Debug("session capabilities",
+				"session", session.ID,
+				"roots", session.Capabilities.Roots,
+				"sampling", session.Capabilities.Sampling,
+			)
+
 			if cached, ok := d.initCache.Get(session.ServerName); ok {
 				resp := &protocol.Message{
 					JSONRPC: "2.0",
@@ -260,7 +295,8 @@ func (d *Daemon) sessionLoop(session *Session, server *ManagedServer) {
 				session.WriteLine(data)
 				continue
 			}
-			// First shim: forward to server, cache response (handled in server reader)
+			// First shim: rewrite capabilities to maximal before forwarding
+			rewriteInitCapabilities(msg)
 		}
 
 		// Intercept initialized notification — drop if server already initialized
