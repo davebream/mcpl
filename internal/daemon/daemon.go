@@ -195,14 +195,90 @@ func (d *Daemon) handleConnection(conn net.Conn) {
 }
 
 func (d *Daemon) sessionLoop(session *Session, server *ManagedServer) {
-	// Placeholder — reads from shim until disconnect.
-	// Full message routing implemented in Task 10.
 	for {
-		_, err := session.ReadLine()
+		line, err := session.ReadLine()
 		if err != nil {
-			return
+			return // shim disconnected
 		}
+
+		msg, err := protocol.ParseMessage(line)
+		if err != nil {
+			d.logger.Warn("invalid message from shim", "session", session.ID, "error", err)
+			continue
+		}
+
+		// Intercept initialize request — return cached response if available
+		if isInitializeRequest(msg) {
+			if cached, ok := d.initCache.Get(session.ServerName); ok {
+				resp := &protocol.Message{
+					JSONRPC: "2.0",
+					ID:      msg.ID,
+					Result:  cached,
+				}
+				data, _ := resp.Serialize()
+				session.WriteLine(data)
+				continue
+			}
+			// First shim: forward to server, cache response (handled in server reader)
+		}
+
+		// Intercept initialized notification — drop if server already initialized
+		if isInitializedNotification(msg) {
+			if _, ok := d.initCache.Get(session.ServerName); ok {
+				continue // already initialized, drop
+			}
+			// First shim: forward to server
+		}
+
+		// Track progress tokens for routing
+		if msg.IsRequest() {
+			if token, ok := protocol.ExtractProgressToken(msg); ok {
+				d.mu.Lock()
+				d.progressTokens[token] = session.ID
+				d.mu.Unlock()
+			}
+		}
+
+		// Track resource subscriptions
+		if isSubscribeRequest(msg) {
+			if uri, ok := extractSubscriptionURI(msg); ok {
+				d.subs.Subscribe(uri, session.ID)
+			}
+		}
+		if isUnsubscribeRequest(msg) {
+			if uri, ok := extractSubscriptionURI(msg); ok {
+				d.subs.Unsubscribe(uri, session.ID)
+			}
+		}
+
+		// Handle cancellation — forward to server
+		if isCancellationNotification(msg) {
+			data, _ := msg.Serialize()
+			server.WriteToStdin(data)
+			continue
+		}
+
+		// Remap request ID and forward to server
+		if msg.IsRequest() {
+			rewriteRequestID(msg, d.idMapper, session.ID)
+		}
+
+		data, _ := msg.Serialize()
+		server.WriteToStdin(data)
 	}
+}
+
+func extractSubscriptionURI(msg *protocol.Message) (string, bool) {
+	if len(msg.Params) == 0 {
+		return "", false
+	}
+	var params struct {
+		URI string `json:"uri"`
+	}
+	if err := json.Unmarshal(msg.Params, &params); err != nil || params.URI == "" {
+		return "", false
+	}
+	return params.URI, true
 }
 
 // reloadConfig re-reads config.json and adds any new servers to the server map.
