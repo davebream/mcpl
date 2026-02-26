@@ -73,20 +73,13 @@ Servers start once and stay running across sessions. Close your editor, reopen i
 
 ## How it works
 
-```
-Editor (stdin/stdout)          mcpl daemon              MCP servers
-+-----------------+      +------------------+      +-------------+
-| Claude Code  ---|----->|                  |----->| context7    |
-+-----------------+  shim|   Manages all    |      +-------------+
-                         |   servers and    |
-+-----------------+      |   routes JSON-   |      +-------------+
-| Cursor       ---|----->|   RPC between    |----->| playwright  |
-+-----------------+  shim|   sessions       |      +-------------+
-                         |                  |
-+-----------------+      |   ID remapping   |      +-------------+
-| Claude Code  ---|----->|   prevents       |----->| filesystem  |
-+-----------------+  shim|   collisions     |      +-------------+
-                         +------------------+
+```mermaid
+graph LR
+    A["Claude Code"] -- shim --> D["mcpl daemon"]
+    B["Cursor"] -- shim --> D
+    C["Claude Code"] -- shim --> D
+    D -- "1 process" --> E["context7"]
+    D -- "1 process" --> F["filesystem"]
 ```
 
 1. **Shim** -- a tiny stdio proxy (`mcpl connect <name>`) that sits where your MCP server command used to be. It bridges your editor's stdin/stdout to the daemon over a Unix socket.
