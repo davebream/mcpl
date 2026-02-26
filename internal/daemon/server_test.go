@@ -3,8 +3,34 @@ package daemon
 import (
 	"testing"
 
+	"github.com/davebream/mcpl/internal/config"
 	"github.com/stretchr/testify/assert"
 )
+
+func TestManagedServerSerializeQueue(t *testing.T) {
+	t.Run("created when serialize is true", func(t *testing.T) {
+		cfg := &config.ServerConfig{Command: "echo", Serialize: true}
+		s := NewManagedServer("test", cfg)
+		assert.NotNil(t, s.serializeQueue, "serialize queue should be created when config.Serialize is true")
+		assert.NotNil(t, s.serializeWaiters, "serialize waiters map should be created")
+		s.CloseSerializeQueue()
+	})
+
+	t.Run("nil when serialize is false", func(t *testing.T) {
+		cfg := &config.ServerConfig{Command: "echo"}
+		s := NewManagedServer("test", cfg)
+		assert.Nil(t, s.serializeQueue, "serialize queue should be nil when config.Serialize is false")
+		assert.Nil(t, s.serializeWaiters, "serialize waiters map should be nil")
+	})
+
+	t.Run("closed on stop", func(t *testing.T) {
+		cfg := &config.ServerConfig{Command: "echo", Serialize: true}
+		s := NewManagedServer("test", cfg)
+		assert.NotNil(t, s.serializeQueue)
+		s.CloseSerializeQueue()
+		// No panic = success (queue's processLoop exited)
+	})
+}
 
 func TestServerState(t *testing.T) {
 	t.Run("valid transitions", func(t *testing.T) {

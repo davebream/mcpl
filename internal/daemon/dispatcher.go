@@ -38,7 +38,7 @@ func (d *Daemon) dispatchServerMessage(msg *protocol.Message, server *ManagedSer
 
 	switch class {
 	case protocol.ClassResponse:
-		d.dispatchResponse(msg)
+		d.dispatchResponse(msg, server)
 
 	case protocol.ClassProgress:
 		d.dispatchProgress(msg)
@@ -57,7 +57,7 @@ func (d *Daemon) dispatchServerMessage(msg *protocol.Message, server *ManagedSer
 	}
 }
 
-func (d *Daemon) dispatchResponse(msg *protocol.Message) {
+func (d *Daemon) dispatchResponse(msg *protocol.Message, server *ManagedServer) {
 	// Check if this is an initialize response before remapping ID
 	var rawGlobalID uint64
 	if err := json.Unmarshal(msg.ID, &rawGlobalID); err == nil {
@@ -77,6 +77,8 @@ func (d *Daemon) dispatchResponse(msg *protocol.Message) {
 	sessionID, err := rewriteResponseID(msg, d.idMapper)
 	if err != nil {
 		d.logger.Warn("response routing failed", "error", err)
+		// Still signal the waiter so the queue doesn't block
+		server.SignalSerializeWaiter(rawGlobalID)
 		return
 	}
 
@@ -88,6 +90,9 @@ func (d *Daemon) dispatchResponse(msg *protocol.Message) {
 		data, _ := msg.Serialize()
 		session.WriteLine(data)
 	}
+
+	// Signal serialize waiter — unblocks processLoop to handle next request
+	server.SignalSerializeWaiter(rawGlobalID)
 }
 
 func (d *Daemon) dispatchProgress(msg *protocol.Message) {

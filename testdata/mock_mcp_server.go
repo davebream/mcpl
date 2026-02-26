@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"time"
 )
 
 type message struct {
@@ -59,7 +60,17 @@ func main() {
 			}
 
 		case "tools/call":
-			// Echo the params back as the result
+			var params struct {
+				Name      string          `json:"name"`
+				Arguments json.RawMessage `json:"arguments"`
+			}
+			json.Unmarshal(msg.Params, &params)
+
+			if params.Name == "slow-echo" {
+				// Sleep 200ms to simulate slow processing
+				time.Sleep(200 * time.Millisecond)
+			}
+
 			resp = message{
 				JSONRPC: "2.0",
 				ID:      msg.ID,

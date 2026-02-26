@@ -56,7 +56,8 @@ func TestDispatchResponse(t *testing.T) {
 	msg, err := protocol.ParseMessage([]byte(`{"jsonrpc":"2.0","id":1,"result":{"tools":[]}}`))
 	require.NoError(t, err)
 
-	go d.dispatchResponse(msg)
+	server := NewManagedServer("srv", nil)
+	go d.dispatchResponse(msg, server)
 
 	require.True(t, scanner.Scan())
 	assert.Contains(t, scanner.Text(), `"id":42`)

@@ -112,7 +112,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 func (d *Daemon) shutdown() {
 	d.logger.Info("shutting down")
 
-	// Close all shim connections and clear transient state
+	// Close all shim connections (stops new requests from entering sessionLoop)
 	d.mu.Lock()
 	for _, session := range d.sessions {
 		session.Close()
@@ -120,8 +120,16 @@ func (d *Daemon) shutdown() {
 	d.pendingInit = make(map[uint64]string)
 	d.mu.Unlock()
 
-	// Stop all server subprocesses (SIGTERM, then SIGKILL after 10s)
-	// (delegated to ServerManager in the full wiring)
+	// Close serialize queues (closes waiters first, then waits for processLoop exit)
+	d.mu.Lock()
+	servers := make([]*ManagedServer, 0, len(d.servers))
+	for _, server := range d.servers {
+		servers = append(servers, server)
+	}
+	d.mu.Unlock()
+	for _, server := range servers {
+		server.CloseSerializeQueue()
+	}
 
 	// Remove socket and PID files
 	os.Remove(d.socketPath)
@@ -291,7 +299,30 @@ func (d *Daemon) sessionLoop(session *Session, server *ManagedServer) {
 		}
 
 		data, _ := msg.Serialize()
-		server.WriteToStdin(data)
+		if server.serializeQueue != nil && msg.IsRequest() {
+			gid := globalID // capture for closure (globalID is loop-scoped)
+			done := make(chan struct{})
+			server.mu.Lock()
+			server.serializeWaiters[gid] = done
+			server.mu.Unlock()
+
+			server.serializeQueue.Enqueue(func() {
+				if err := server.WriteToStdin(data); err != nil {
+					d.logger.Warn("serialize write failed", "server", server.name, "error", err)
+					// Clean up waiter — response won't arrive
+					server.mu.Lock()
+					if ch, ok := server.serializeWaiters[gid]; ok {
+						delete(server.serializeWaiters, gid)
+						close(ch)
+					}
+					server.mu.Unlock()
+					return
+				}
+				<-done // block until response arrives (or server crashes)
+			})
+		} else {
+			server.WriteToStdin(data)
+		}
 	}
 }
 
@@ -325,6 +356,13 @@ func (d *Daemon) ensureServerRunning(server *ManagedServer) error {
 			d.logger.Warn("server exited unexpectedly", "server", server.name, "state", state)
 			server.RecordCrash()
 			server.ForceStop()
+			// Close all pending serialize waiters — unblocks processLoop
+			server.mu.Lock()
+			for id, done := range server.serializeWaiters {
+				close(done)
+				delete(server.serializeWaiters, id)
+			}
+			server.mu.Unlock()
 			// Clear pending init entries for this server
 			d.mu.Lock()
 			for id, name := range d.pendingInit {

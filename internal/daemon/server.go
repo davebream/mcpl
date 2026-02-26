@@ -58,27 +58,61 @@ const maxCrashes = 3
 const crashWindow = 60 * time.Second
 
 type ManagedServer struct {
-	mu          sync.Mutex
-	name        string
-	config      *config.ServerConfig
-	state       ServerState
-	connections map[string]bool
-	crashes     []time.Time
-	startedAt   time.Time
-	cmd         *exec.Cmd
-	stdin       io.WriteCloser
-	stdout      io.ReadCloser
-	stderr      io.ReadCloser
-	done        chan struct{}
+	mu               sync.Mutex
+	name             string
+	config           *config.ServerConfig
+	state            ServerState
+	connections      map[string]bool
+	crashes          []time.Time
+	startedAt        time.Time
+	cmd              *exec.Cmd
+	stdin            io.WriteCloser
+	stdout           io.ReadCloser
+	stderr           io.ReadCloser
+	done             chan struct{}
+	serializeQueue   *SerializeQueue          // nil unless config.Serialize is true
+	serializeWaiters map[uint64]chan struct{} // globalID -> done channel; nil unless serialize
 }
 
 func NewManagedServer(name string, cfg *config.ServerConfig) *ManagedServer {
-	return &ManagedServer{
+	s := &ManagedServer{
 		name:        name,
 		config:      cfg,
 		state:       StateStopped,
 		connections: make(map[string]bool),
 	}
+	if cfg != nil && cfg.Serialize {
+		s.serializeQueue = NewSerializeQueue()
+		s.serializeWaiters = make(map[uint64]chan struct{})
+	}
+	return s
+}
+
+func (s *ManagedServer) CloseSerializeQueue() {
+	if s.serializeQueue != nil {
+		// Close all pending waiters first so processLoop can exit
+		s.mu.Lock()
+		for id, done := range s.serializeWaiters {
+			close(done)
+			delete(s.serializeWaiters, id)
+		}
+		s.mu.Unlock()
+		s.serializeQueue.Close()
+	}
+}
+
+// SignalSerializeWaiter closes the done channel for a completed serialize request.
+// Called from dispatchResponse when the server sends a response.
+func (s *ManagedServer) SignalSerializeWaiter(globalID uint64) {
+	if s.serializeWaiters == nil {
+		return
+	}
+	s.mu.Lock()
+	if done, ok := s.serializeWaiters[globalID]; ok {
+		delete(s.serializeWaiters, globalID)
+		close(done)
+	}
+	s.mu.Unlock()
 }
 
 func (s *ManagedServer) Name() string { return s.name }

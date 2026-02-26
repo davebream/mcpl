@@ -555,6 +555,89 @@ func TestIntegration_InitCaching(t *testing.T) {
 	cancel()
 }
 
+func TestIntegration_SerializeMode(t *testing.T) {
+	mockBin := buildMockServer(t)
+
+	cfg := &config.Config{
+		Servers: map[string]*config.ServerConfig{
+			"mock": {
+				Command:   mockBin,
+				Args:      []string{},
+				Serialize: true,
+			},
+		},
+	}
+
+	d, socketPath := newTestDaemon(t, cfg)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go d.Run(ctx)
+
+	require.Eventually(t, func() bool {
+		conn, err := net.Dial("unix", socketPath)
+		if err == nil {
+			conn.Close()
+			return true
+		}
+		return false
+	}, 2*time.Second, 50*time.Millisecond)
+
+	conn, reader := shimConn(t, socketPath, "mock")
+	defer conn.Close()
+	time.Sleep(200 * time.Millisecond)
+
+	// Initialize
+	sendJSON(t, conn, map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "initialize",
+		"params": map[string]interface{}{
+			"protocolVersion": "2024-11-05",
+			"clientInfo":      map[string]string{"name": "test"},
+			"capabilities":    map[string]interface{}{},
+		},
+	})
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	readJSON(t, reader)
+
+	// Send 3 slow-echo requests rapidly
+	start := time.Now()
+	for i := 2; i <= 4; i++ {
+		sendJSON(t, conn, map[string]interface{}{
+			"jsonrpc": "2.0",
+			"id":      i,
+			"method":  "tools/call",
+			"params": map[string]interface{}{
+				"name":      "slow-echo",
+				"arguments": map[string]string{"n": fmt.Sprintf("%d", i)},
+			},
+		})
+	}
+
+	// Read all 3 responses
+	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	responseIDs := make(map[string]bool)
+	for i := 0; i < 3; i++ {
+		resp := readJSON(t, reader)
+		responseIDs[string(resp["id"])] = true
+	}
+	elapsed := time.Since(start)
+
+	// All 3 should arrive
+	for i := 2; i <= 4; i++ {
+		assert.True(t, responseIDs[fmt.Sprintf("%d", i)], "should receive response for id %d", i)
+	}
+
+	// With serialize=true and 200ms delay each, total should be >= 500ms
+	// (sequential processing: write → wait for response → next).
+	// Without serialize it would be ~200ms (all requests pipelined).
+	assert.GreaterOrEqual(t, elapsed.Milliseconds(), int64(500),
+		"serialized requests should take at least 500ms for 3x200ms tasks, got %dms", elapsed.Milliseconds())
+
+	cancel()
+}
+
 func TestIntegration_ConcurrentRequests(t *testing.T) {
 	mockBin := buildMockServer(t)
 
