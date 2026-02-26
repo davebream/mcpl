@@ -71,6 +71,7 @@ func NewIDMapper() *IDMapper {
 }
 
 // Map assigns a globally unique ID and records the mapping.
+// Note: concurrent calls produce unique IDs but map insertions are not strictly ordered by ID.
 func (m *IDMapper) Map(originalID json.RawMessage, sessionID string) uint64 {
 	globalID := m.counter.Add(1)
 	m.mu.Lock()

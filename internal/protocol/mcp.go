@@ -54,7 +54,9 @@ func NewInitCache() *InitCache {
 func (c *InitCache) Store(serverName string, result json.RawMessage) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.cached[serverName] = result
+	cp := make(json.RawMessage, len(result))
+	copy(cp, result)
+	c.cached[serverName] = cp
 }
 
 func (c *InitCache) Get(serverName string) (json.RawMessage, bool) {
