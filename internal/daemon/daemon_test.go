@@ -48,7 +48,7 @@ func TestDaemonAcceptsConnections(t *testing.T) {
 		IdleTimeout:       "30m",
 		ServerIdleTimeout: "10m",
 		Servers: map[string]*config.ServerConfig{
-			"test-server": {Command: "echo", Args: []string{"hello"}},
+			"test-server": {Command: "/bin/cat", Args: []string{}},
 		},
 	}
 

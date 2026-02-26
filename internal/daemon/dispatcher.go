@@ -58,13 +58,27 @@ func (d *Daemon) dispatchServerMessage(msg *protocol.Message, server *ManagedSer
 }
 
 func (d *Daemon) dispatchResponse(msg *protocol.Message) {
+	// Check if this is an initialize response before remapping ID
+	var rawGlobalID uint64
+	if err := json.Unmarshal(msg.ID, &rawGlobalID); err == nil {
+		d.mu.Lock()
+		serverName, isInitResp := d.pendingInit[rawGlobalID]
+		if isInitResp {
+			delete(d.pendingInit, rawGlobalID)
+		}
+		d.mu.Unlock()
+
+		if isInitResp && msg.Result != nil {
+			d.initCache.Store(serverName, msg.Result)
+			d.logger.Info("cached initialize response", "server", serverName)
+		}
+	}
+
 	sessionID, err := rewriteResponseID(msg, d.idMapper)
 	if err != nil {
 		d.logger.Warn("response routing failed", "error", err)
 		return
 	}
-
-	// TODO: cache initialize response here (Task 10d)
 
 	d.mu.Lock()
 	session, ok := d.sessions[sessionID]

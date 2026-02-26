@@ -10,6 +10,7 @@ import (
 
 	"github.com/davebream/mcpl/internal/config"
 	"github.com/davebream/mcpl/internal/daemon"
+	"github.com/davebream/mcpl/internal/logging"
 	"github.com/spf13/cobra"
 )
 
@@ -50,10 +51,16 @@ var daemonCmd = &cobra.Command{
 			fmt.Fprintf(os.Stderr, "mcpl: cannot create log directory: %v\n", err)
 		}
 
-		// TODO: set up file-based logger
-		logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
-			Level: slog.LevelInfo,
-		}))
+		logger, logCleanup, logErr := logging.Setup(logDir, slog.LevelInfo, daemonForeground)
+		if logErr != nil {
+			// Non-fatal: fall back to stderr-only logging
+			fmt.Fprintf(os.Stderr, "mcpl: cannot set up file logging: %v\n", logErr)
+			logger = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+				Level: slog.LevelInfo,
+			}))
+			logCleanup = func() {}
+		}
+		defer logCleanup()
 
 		d, err := daemon.New(cfg, socketPath, logger)
 		if err != nil {

@@ -28,6 +28,7 @@ type Daemon struct {
 	initCache      *protocol.InitCache
 	subs           *protocol.SubscriptionTracker
 	progressTokens map[string]string // progressToken -> sessionID
+	pendingInit    map[uint64]string // globalID -> serverName (for caching init responses)
 }
 
 func New(cfg *config.Config, socketPath string, logger *slog.Logger) (*Daemon, error) {
@@ -50,6 +51,7 @@ func New(cfg *config.Config, socketPath string, logger *slog.Logger) (*Daemon, e
 		initCache:      protocol.NewInitCache(),
 		subs:           protocol.NewSubscriptionTracker(),
 		progressTokens: make(map[string]string),
+		pendingInit:    make(map[uint64]string),
 	}, nil
 }
 
@@ -110,11 +112,12 @@ func (d *Daemon) Run(ctx context.Context) error {
 func (d *Daemon) shutdown() {
 	d.logger.Info("shutting down")
 
-	// Close all shim connections
+	// Close all shim connections and clear transient state
 	d.mu.Lock()
 	for _, session := range d.sessions {
 		session.Close()
 	}
+	d.pendingInit = make(map[uint64]string)
 	d.mu.Unlock()
 
 	// Stop all server subprocesses (SIGTERM, then SIGKILL after 10s)
@@ -167,11 +170,19 @@ func (d *Daemon) handleConnection(conn net.Conn) {
 
 	server.AddConnection(session.ID)
 
-	status := "ready"
+	// Auto-start server subprocess if not running
 	if server.State() == StateStopped {
-		status = "starting"
+		if err := d.ensureServerRunning(server); err != nil {
+			server.RemoveConnection(session.ID)
+			d.mu.Lock()
+			delete(d.sessions, session.ID)
+			d.mu.Unlock()
+			d.writeError(conn, "start_failed", fmt.Sprintf("failed to start server %q: %v", req.Server, err))
+			return
+		}
 	}
 
+	status := "ready"
 	resp := protocol.NewConnectedResponse(status)
 	session.WriteJSON(resp)
 
@@ -214,8 +225,10 @@ func (d *Daemon) sessionLoop(session *Session, server *ManagedServer) {
 			continue
 		}
 
+		isInit := isInitializeRequest(msg)
+
 		// Intercept initialize request — return cached response if available
-		if isInitializeRequest(msg) {
+		if isInit {
 			if cached, ok := d.initCache.Get(session.ServerName); ok {
 				resp := &protocol.Message{
 					JSONRPC: "2.0",
@@ -265,13 +278,73 @@ func (d *Daemon) sessionLoop(session *Session, server *ManagedServer) {
 		}
 
 		// Remap request ID and forward to server
+		var globalID uint64
 		if msg.IsRequest() {
-			rewriteRequestID(msg, d.idMapper, session.ID)
+			globalID = rewriteRequestID(msg, d.idMapper, session.ID)
+		}
+
+		// Track initialize request for caching the response
+		if isInit {
+			d.mu.Lock()
+			d.pendingInit[globalID] = session.ServerName
+			d.mu.Unlock()
 		}
 
 		data, _ := msg.Serialize()
 		server.WriteToStdin(data)
 	}
+}
+
+// ensureServerRunning starts the server subprocess if it's stopped,
+// resolves env vars, transitions state, and starts the stdout reader.
+func (d *Daemon) ensureServerRunning(server *ManagedServer) error {
+	if server.IsFailed() {
+		return fmt.Errorf("server %s has failed (too many crashes)", server.name)
+	}
+
+	if err := server.TransitionTo(StateStarting); err != nil {
+		return err
+	}
+
+	resolvedEnv := config.ResolveEnv(server.config.Env)
+	if err := server.Start(resolvedEnv); err != nil {
+		server.ForceStop()
+		return err
+	}
+
+	d.logger.Info("server started", "server", server.name)
+
+	// Start reading server stdout
+	d.startServerReader(server)
+
+	// Monitor process in background
+	go func() {
+		server.Wait()
+		state := server.State()
+		if state != StateStopped {
+			d.logger.Warn("server exited unexpectedly", "server", server.name, "state", state)
+			server.RecordCrash()
+			server.ForceStop()
+			// Clear pending init entries for this server
+			d.mu.Lock()
+			for id, name := range d.pendingInit {
+				if name == server.name {
+					delete(d.pendingInit, id)
+				}
+			}
+			d.mu.Unlock()
+		}
+	}()
+
+	// Transition to ready (skip INITIALIZING for now — first shim handles init handshake)
+	if err := server.TransitionTo(StateInitializing); err != nil {
+		return err
+	}
+	if err := server.TransitionTo(StateReady); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // reloadConfig re-reads config.json and adds any new servers to the server map.
